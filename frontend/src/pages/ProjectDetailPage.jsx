@@ -5,7 +5,7 @@ import {
   Activity, Layers, Play, Square, RotateCcw, ArrowDown,
   RefreshCw, Upload, Globe, Server, Eye, EyeOff, Copy, Check,
   Cpu, HardDrive, Shield, AlertTriangle, Key, ExternalLink, Trash2,
-  Calendar, CheckCircle, Info
+  Calendar, CheckCircle, Info, Plus
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
@@ -134,6 +134,13 @@ export default function ProjectDetailPage() {
   const [envError, setEnvError]     = useState('')
   const [revealAnonKey, setRevealAnonKey] = useState(false)
   
+  const [newFnName, setNewFnName]   = useState('')
+  const [selectedFns, setSelectedFns] = useState(new Set())
+  const [fnBusy, setFnBusy]         = useState(null)
+  const [fnError, setFnError]       = useState('')
+  const [zipFile, setZipFile]       = useState(null)
+  const zipInputRef = useRef(null)
+  
   const migRef  = useRef(null)
   const logsRef = useRef(null)
 
@@ -236,6 +243,73 @@ export default function ProjectDetailPage() {
       setDetail(r.data)
     } catch (e) { setActionMsg(`✗ Execution failed: ${e.response?.data?.error || e.message}`) }
     setActionBusy(null)
+  }
+
+  const createFunction = async () => {
+    if (!newFnName) return
+    setFnBusy('create'); setFnError('')
+    try {
+      await api.post(`/api/supabase/${id}/functions/create`, { name: newFnName })
+      setNewFnName('')
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setFnError(e.response?.data?.error || e.message)
+    } finally {
+      setFnBusy(null)
+    }
+  }
+
+  const deleteSelectedFunctions = async () => {
+    if (selectedFns.size === 0) return
+    if (!confirm(`Are you sure you want to permanently delete the ${selectedFns.size} selected edge functions?`)) return
+    setFnBusy('delete'); setFnError('')
+    try {
+      await api.post(`/api/supabase/${id}/functions/delete`, { names: Array.from(selectedFns) })
+      setSelectedFns(new Set())
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setFnError(e.response?.data?.error || e.message)
+    } finally {
+      setFnBusy(null)
+    }
+  }
+
+  const uploadFunctionsZip = async (file) => {
+    if (!file) return
+    setFnBusy('upload'); setFnError('')
+    try {
+      const token = localAuth.getToken() || ''
+      const body = new FormData()
+      body.append('zipFile', file)
+      const resp = await fetch(`${API_URL}/api/supabase/${id}/functions/upload-zip`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body
+      })
+      const d = await resp.json()
+      if (!resp.ok) throw new Error(d.error || 'Failed to upload zip')
+      setZipFile(null)
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setFnError(e.message)
+    } finally {
+      setFnBusy(null)
+    }
+  }
+
+  const deployFunctions = async () => {
+    setFnBusy('deploy'); setFnError(''); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/functions/deploy`)
+      setActionMsg('✓ Edge Functions reloaded and container restarted successfully')
+    } catch (e) {
+      setFnError(e.response?.data?.error || e.message)
+    } finally {
+      setFnBusy(null)
+    }
   }
 
   const revealEnv = async () => {
@@ -773,39 +847,193 @@ export default function ProjectDetailPage() {
         {/* EDGE FUNCTIONS TAB */}
         {tab === 'functions' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Control Bar Card */}
             <div className="glass-card" style={{ padding: 24 }}>
-              <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800 }}>Supabase Edge Functions</h3>
-              <p style={{ margin: '0 0 20px 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                Deno-based edge functions configured inside the compose directory path.
-              </p>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, marginBottom: 20 }}>
+                <div>
+                  <h3 style={{ margin: '0 0 4px', fontSize: '1.1rem', fontWeight: 800 }}>Supabase Edge Functions Console</h3>
+                  <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+                    Create Deno functions, import zip bundles, redeploy edge services, and manage live API routes.
+                  </p>
+                </div>
 
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button className="btn btn-secondary" onClick={() => zipInputRef.current?.click()} disabled={fnBusy === 'upload'} style={{ height: 36, fontSize: '0.8rem', gap: 6 }}>
+                    {fnBusy === 'upload' ? <RefreshCw size={13} className="animate-spin"/> : <Upload size={13}/>}
+                    Upload ZIP
+                  </button>
+                  <input type="file" ref={zipInputRef} accept=".zip" hidden onChange={e => { if (e.target.files?.[0]) uploadFunctionsZip(e.target.files[0]) }}/>
+
+                  <button className="btn btn-secondary" onClick={deployFunctions} disabled={fnBusy === 'deploy'} style={{ height: 36, fontSize: '0.8rem', gap: 6 }}>
+                    {fnBusy === 'deploy' ? <RefreshCw size={13} className="animate-spin"/> : <RotateCcw size={13}/>}
+                    Restart Engine
+                  </button>
+                </div>
+              </div>
+
+              {/* Create Inline Form */}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '16px 20px', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--color-border)', borderRadius: 10, marginBottom: 20 }}>
+                <Code2 size={16} color="var(--color-primary)"/>
+                <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--color-text-dim)', marginRight: 6 }}>Create Blank Function:</span>
+                <input
+                  type="text"
+                  placeholder="e.g. hello-world"
+                  value={newFnName}
+                  onChange={e => setNewFnName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))}
+                  className="input"
+                  style={{ width: 220, height: 34, fontSize: '0.8rem', padding: '0 12px' }}
+                />
+                <button className="btn btn-primary" onClick={createFunction} disabled={!newFnName || fnBusy === 'create'} style={{ height: 34, fontSize: '0.8rem', gap: 6 }}>
+                  {fnBusy === 'create' ? <RefreshCw size={13} className="animate-spin"/> : <Plus size={13}/>}
+                  Create
+                </button>
+              </div>
+
+              {/* Errors Panel */}
+              {fnError && (
+                <div className="glass-card" style={{ padding: '12px 18px', background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--color-danger)', marginBottom: 20 }}>
+                  ✗ Error: {fnError}
+                </div>
+              )}
+
+              {/* Selected Bulks Card */}
+              {selectedFns.size > 0 && (
+                <div className="glass-card animate-fade-in" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px', background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 10, marginBottom: 20 }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-danger)' }}>{selectedFns.size} functions selected for deletion</span>
+                  <button className="btn btn-danger btn-sm" onClick={deleteSelectedFunctions} disabled={fnBusy === 'delete'} style={{ marginLeft: 'auto', gap: 6, padding: '0 12px', height: 30, fontSize: '0.78rem' }}>
+                    {fnBusy === 'delete' ? <RefreshCw size={12} className="animate-spin"/> : <Trash2 size={12}/>}
+                    Bulk Delete
+                  </button>
+                </div>
+              )}
+
+              {/* Functions Table / List */}
               {(detail?.functions || []).length === 0 ? (
-                <div style={{ padding: 36, textAlign: 'center', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--color-border)', borderRadius: 10 }}>
-                  <Code2 size={28} style={{ opacity: 0.3, marginBottom: 8 }} />
-                  <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                    No edge function directories parsed under <code style={{ fontFamily: 'var(--font-mono)' }}>/functions/</code> folder.
+                <div style={{ padding: 48, textAlign: 'center', background: 'rgba(255,255,255,0.01)', border: '1px dashed var(--color-border)', borderRadius: 10 }}>
+                  <Code2 size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
+                  <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>
+                    No edge functions currently deployed. Upload a ZIP or create a blank function above!
                   </div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                  {detail.functions.map((fn, i) => (
-                    <div key={i} className="hover-glow" style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 20px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Code2 size={15} color="#a855f7" />
-                      </div>
+                <div className="glass-card" style={{ padding: 0, overflow: 'hidden', border: '1px solid var(--color-border)' }}>
+                  <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12, background: 'rgba(255,255,255,0.01)' }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedFns.size === detail.functions.length && detail.functions.length > 0}
+                      onChange={() => {
+                        if (selectedFns.size === detail.functions.length) {
+                          setSelectedFns(new Set())
+                        } else {
+                          setSelectedFns(new Set(detail.functions))
+                        }
+                      }}
+                      style={{ cursor: 'pointer', width: 14, height: 14 }}
+                    />
+                    <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>Select All Deployed Functions</span>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    {detail.functions.map((fn, i) => {
+                      const isSelected = selectedFns.has(fn)
+                      const endpointUrl = `${project?.apiUrl || 'https://db.example.com'}/functions/v1/${fn}`
                       
-                      <div>
-                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', fontWeight: 700 }}>{fn}</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 2 }}>Ready and actively listening for API endpoints</div>
-                      </div>
-                      
-                      <span className="badge badge-green" style={{ marginLeft: 'auto', fontSize: '0.7rem', padding: '3px 8px' }}>
-                        Deno runtime
-                      </span>
-                    </div>
-                  ))}
+                      return (
+                        <div key={fn} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 14,
+                          padding: '14px 18px',
+                          borderBottom: i < detail.functions.length - 1 ? '1px solid var(--color-border)' : 'none',
+                          background: isSelected ? 'rgba(59,130,246,0.02)' : 'transparent',
+                          transition: 'background 0.2s',
+                          flexWrap: 'wrap'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              const s = new Set(selectedFns)
+                              if (s.has(fn)) s.delete(fn)
+                              else s.add(fn)
+                              setSelectedFns(s)
+                            }}
+                            style={{ cursor: 'pointer', width: 14, height: 14 }}
+                          />
+
+                          <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(168,85,247,0.06)', border: '1px solid rgba(168,85,247,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Code2 size={15} color="#a855f7" />
+                          </div>
+
+                          <div style={{ minWidth: 160 }}>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)' }}>{fn}</span>
+                            <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 2 }}>Deno Runtime edge function</div>
+                          </div>
+
+                          {/* Endpoint link with Copy */}
+                          <div style={{ flex: 1, minWidth: 280, display: 'flex', alignItems: 'center', gap: 8, background: '#070708', padding: '6px 12px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+                            <span style={{ fontSize: '0.68rem', color: '#10b981', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>POST</span>
+                            <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                              {endpointUrl}
+                            </code>
+                            <CopyButton text={endpointUrl} />
+                          </div>
+
+                          <span className="badge badge-green" style={{ fontSize: '0.7rem', padding: '3px 8px', fontWeight: 700 }}>
+                            ACTIVE
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               )}
+            </div>
+
+            {/* Structure Instructions Card */}
+            <div className="glass-card" style={{ padding: 24 }}>
+              <h4 style={{ margin: '0 0 8px 0', fontSize: '0.9rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Info size={15} color="var(--color-primary)"/> ZIP Import Structure Instructions
+              </h4>
+              <p style={{ margin: '0 0 16px 0', fontSize: '0.8rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                Create a `.zip` archive containing your edge functions. Each function must reside in its own subdirectory containing an `index.ts` entry handler file:
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 20 }}>
+                <div>
+                  <pre style={{
+                    margin: 0,
+                    padding: '14px 18px',
+                    background: '#070708',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 8,
+                    fontFamily: 'var(--font-mono)',
+                    fontSize: '0.76rem',
+                    color: 'var(--color-text-dim)',
+                    lineHeight: 1.6
+                  }}>{`📦 main.zip
+└── 📁 send-otp
+    ├── 📄 index.ts (Deno handler file)
+    └── 📄 ... (helpers/configs)
+└── 📁 db-dump
+    ├── 📄 index.ts
+    └── 📄 ...`}</pre>
+                </div>
+                
+                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10, lineHeight: 1.4 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>1.</span>
+                    <span><strong>Naming Constraint:</strong> Subdirectory names will determine the endpoint route (e.g. <code>/functions/v1/send-otp</code>).</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>2.</span>
+                    <span><strong>Entry File:</strong> An <code>index.ts</code> is required as the core execution endpoint handler for the Deno engine.</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>3.</span>
+                    <span><strong>Automatic Hot-Reload:</strong> Unzipping places files instantly into the directory. Press "Restart Engine" to recycle the container immediately.</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}

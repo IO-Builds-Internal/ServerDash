@@ -876,4 +876,137 @@ router.post('/:id/:action', async (req, res) => {
   }
 })
 
+// Helper to determine functions directory
+const getFunctionsDir = (composePath) => {
+  const candidates = [
+    `${composePath}/volumes/functions`,
+    `${composePath}/functions`,
+    `${composePath}/supabase/functions`
+  ]
+  for (const dir of candidates) {
+    if (fs.existsSync(dir)) return dir
+  }
+  if (fs.existsSync(`${composePath}/volumes`)) {
+    return `${composePath}/volumes/functions`
+  }
+  return `${composePath}/functions`
+}
+
+// ── POST /api/supabase/:id/functions/create ────────────────────────────────────
+router.post('/:id/functions/create', async (req, res) => {
+  const { id } = req.params
+  const { name } = req.body
+  if (!name) return res.status(400).json({ error: 'Function name required' })
+
+  const builtin = detectBuiltinProject()
+  const allProjects = [...(builtin ? [builtin] : []), ...loadProjects()]
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  try {
+    const cleanName = name.toLowerCase().replace(/[^a-z0-9-]/g, '-')
+    const fnBaseDir = getFunctionsDir(project.composePath)
+    const newFnDir = path.join(fnBaseDir, cleanName)
+
+    if (fs.existsSync(newFnDir)) {
+      return res.status(409).json({ error: `Function "${cleanName}" already exists` })
+    }
+
+    fs.mkdirSync(newFnDir, { recursive: true })
+    const boilerplate = `// Deno Edge Function: ${cleanName}
+Deno.serve(async (req) => {
+  const { name } = await req.json().catch(() => ({ name: "World" }));
+  const payload = {
+    message: \`Hello \${name}! Welcome to Deno Edge Runtime!\`,
+    timestamp: new Date().toISOString()
+  };
+  
+  return new Response(JSON.stringify(payload), {
+    headers: { "Content-Type": "application/json" }
+  });
+});
+`
+    fs.writeFileSync(path.join(newFnDir, 'index.ts'), boilerplate, 'utf8')
+    res.json({ success: true, name: cleanName })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── POST /api/supabase/:id/functions/delete ────────────────────────────────────
+router.post('/:id/functions/delete', async (req, res) => {
+  const { id } = req.params
+  const { names } = req.body
+  if (!names || !names.length) return res.status(400).json({ error: 'names array required' })
+
+  const builtin = detectBuiltinProject()
+  const allProjects = [...(builtin ? [builtin] : []), ...loadProjects()]
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  try {
+    const fnBaseDir = getFunctionsDir(project.composePath)
+    for (const name of names) {
+      const targetDir = path.join(fnBaseDir, path.basename(name))
+      if (fs.existsSync(targetDir)) {
+        fs.rmSync(targetDir, { recursive: true, force: true })
+      }
+    }
+    res.json({ success: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── POST /api/supabase/:id/functions/upload-zip ────────────────────────────────
+router.post('/:id/functions/upload-zip', upload.single('zipFile'), async (req, res) => {
+  const { id } = req.params
+  const builtin = detectBuiltinProject()
+  const allProjects = [...(builtin ? [builtin] : []), ...loadProjects()]
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+  if (!req.file) return res.status(400).json({ error: 'No zip file uploaded' })
+
+  try {
+    const fnBaseDir = getFunctionsDir(project.composePath)
+    fs.mkdirSync(fnBaseDir, { recursive: true })
+
+    const zipPath = req.file.path
+    const { stdout, stderr, code } = await ssh.exec(
+      `unzip -o "${zipPath}" -d "${fnBaseDir}" 2>&1`,
+      { timeout: 120000, ignoreErrors: true }
+    )
+
+    try { fs.unlinkSync(zipPath) } catch {}
+
+    if (code !== 0) {
+      throw new Error(`Unzip failed: ${stderr || stdout}`)
+    }
+
+    res.json({ success: true, output: stdout || 'Functions unzipped successfully' })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── POST /api/supabase/:id/functions/deploy ────────────────────────────────────
+router.post('/:id/functions/deploy', async (req, res) => {
+  const { id } = req.params
+  const builtin = detectBuiltinProject()
+  const allProjects = [...(builtin ? [builtin] : []), ...loadProjects()]
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  try {
+    const composeFile = `${project.composePath}/docker-compose.yml`
+    const { stdout, stderr } = await ssh.exec(
+      `docker compose -f ${composeFile} restart edge-runtime 2>&1`,
+      { timeout: 60000, ignoreErrors: true }
+    )
+    res.json({ success: true, output: stdout || stderr })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 module.exports = router
