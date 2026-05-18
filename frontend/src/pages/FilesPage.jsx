@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useNavigate as useReactRouterNavigate } from 'react-router-dom'
 import {
   Folder, File, ChevronRight, ChevronUp, Upload, Download,
   Trash2, Plus, Edit2, RefreshCw, X, Save, FolderPlus, Eye,
@@ -97,6 +97,8 @@ function RenameModal({ item, currentPath, onClose, onDone }) {
 
 export default function FilesPage({ initialPath }) {
   const location = useLocation()
+  const routerNavigate = useReactRouterNavigate()
+  const backToSite = location.state?.backToSite
   const [path, setPath] = useState(location.state?.path || initialPath || '/root')
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
@@ -196,11 +198,30 @@ export default function FilesPage({ initialPath }) {
       {editor && <EditorModal file={editor} onClose={() => setEditor(null)} />}
       {renaming && <RenameModal item={renaming} currentPath={path} onClose={() => setRenaming(null)} onDone={() => { setRenaming(null); load() }} />}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>File Manager</h1>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>Full VPS filesystem access</p>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>
+            Full VPS filesystem access {backToSite && <span>(Browsing files for <strong>{backToSite.domain}</strong>)</span>}
+          </p>
         </div>
+        {backToSite && (
+          <button 
+            className="btn btn-secondary" 
+            onClick={() => routerNavigate(`/websites/${backToSite.id}`)}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6, 
+              padding: '8px 16px', 
+              background: 'rgba(59, 130, 246, 0.08)', 
+              borderColor: 'rgba(59, 130, 246, 0.25)', 
+              color: 'var(--color-primary)' 
+            }}
+          >
+            <ArrowLeft size={14}/> Back to Manage Site ({backToSite.domain})
+          </button>
+        )}
       </div>
 
       {/* Toolbar */}

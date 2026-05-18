@@ -460,7 +460,7 @@ export default function SiteDetailPage() {
                     <div style={{ fontSize:'0.85rem', marginTop:6, display:'flex', alignItems:'center', gap:6 }}>
                       <span style={{ fontFamily:'var(--font-mono)', wordBreak:'break-all' }}>{site.root || '—'}</span>
                       {site.root && (
-                        <button className="btn btn-secondary btn-sm" style={{ padding:'2px 6px', fontSize:'0.7rem' }} onClick={() => navigate('/files', { state: { path: site.root } })}>
+                        <button className="btn btn-secondary btn-sm" style={{ padding:'2px 6px', fontSize:'0.7rem' }} onClick={() => navigate('/files', { state: { path: site.root, backToSite: { id, domain: site.domain } } })}>
                           <FolderOpen size={11}/> Browse files
                         </button>
                       )}
@@ -607,7 +607,7 @@ export default function SiteDetailPage() {
                     <Shield size={15}/> Re-config Let's Encrypt SSL
                   </button>
                   {site.root && (
-                    <button className="btn btn-secondary" onClick={() => navigate('/files', { state: { path: site.root } })} style={{ width:'100%', justifyContent:'flex-start' }}>
+                    <button className="btn btn-secondary" onClick={() => navigate('/files', { state: { path: site.root, backToSite: { id, domain: site.domain } } })} style={{ width:'100%', justifyContent:'flex-start' }}>
                       <FolderOpen size={15}/> Open in File Manager
                     </button>
                   )}
