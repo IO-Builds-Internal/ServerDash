@@ -51,45 +51,38 @@
 
 ---
 
-## ⚡ Quick Start
+## ⚡ Quick Start & Deployment
 
-### 1. Clone & Configure
+### 🚀 The One-Command Automated Installer (Highly Recommended)
+If you are setting up ServerDash on a **freshly formatted VPS** (running Ubuntu 20.04/22.04/24.04 or Debian 11/12), you can run our production-ready, fully automated one-line installer. 
+
+This script automatically provisions all OS libraries, configures reverse-proxy Nginx servers, sets up Node/PM2 runtimes, configures firewalls, generates secure credentials, and outputs a beautiful login credentials summary dashboard!
+
+To begin, simply execute the following command:
 
 ```bash
-git clone https://github.com/yourusername/ServerDash.git
+curl -fsSL https://raw.githubusercontent.com/iobuilds/ServerDash/main/install.sh | bash
+```
+
+---
+
+### 🛠️ Manual Configuration & Development
+
+If you prefer to configure components manually, follow these standard steps:
+
+#### 1. Clone & Configure
+```bash
+git clone https://github.com/iobuilds/ServerDash.git
 cd ServerDash
-
-# Frontend env
-cp frontend/.env.example frontend/.env
-# Edit with your Supabase credentials
-
-# Backend env
-cp backend/.env.example backend/.env
-# Edit with your VPS SSH details
 ```
 
-### 2. Run with Docker Compose
-
+#### 2. Local Runtimes
 ```bash
-docker compose up -d
-```
-
-The dashboard will be available at **http://your-server:5173**
-
-### 3. Or Run Locally
-
-```bash
-# Terminal 1 — Frontend
-cd frontend && npm install && npm run dev
-
-# Terminal 2 — Backend
+# Terminal 1 — Launch Backend Service
 cd backend && npm install && npm start
-```
 
-### One-liner install on your VPS
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/yourusername/ServerDash/main/install.sh | bash
+# Terminal 2 — Launch Frontend Interface
+cd frontend && npm install && npm run dev
 ```
 
 ---
