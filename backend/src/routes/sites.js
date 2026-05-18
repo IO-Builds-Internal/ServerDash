@@ -1531,9 +1531,11 @@ router.get('/:id/backup', async (req, res) => {
       }
     }
 
-    // 3. Copy website files
+    // 3. Copy website files (excluding heavy/transient directories)
     if (fs.existsSync(site.root)) {
-      await execAsync(`cp -r ${site.root}/* "${tmpBackupDir}/files/"`).catch(() => {})
+      await execAsync(
+        `rsync -a --exclude='node_modules' --exclude='.git' --exclude='dist' --exclude='.next' --exclude='.wrangler' --exclude='.tanstack' "${site.root}/" "${tmpBackupDir}/files/"`
+      ).catch(() => {})
     }
 
     // 4. Copy .serverdash.json if present

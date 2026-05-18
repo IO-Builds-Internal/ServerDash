@@ -766,6 +766,9 @@ export default function SupabasePage() {
   const [tab, setTab] = useState('projects') // projects | ports
   const [selectedProjects, setSelectedProjects] = useState(new Set())
   const [proxyProject, setProxyProject] = useState(null)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionTitle, setActionTitle] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
 
   const load = useCallback(async () => {
     const [pr, po] = await Promise.allSettled([
@@ -818,6 +821,9 @@ export default function SupabasePage() {
   }
 
   const backup = async (id, name) => {
+    setActionTitle('Generating Database Backup...')
+    setActionMessage('Dumping database schema, tables, records, and relationships. Please wait.')
+    setActionLoading(true)
     try {
       const token = localAuth.getToken() || ''
       const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/backup`, {
@@ -834,6 +840,8 @@ export default function SupabasePage() {
       window.URL.revokeObjectURL(url)
     } catch (e) {
       alert(e.message)
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -850,6 +858,9 @@ export default function SupabasePage() {
       const formData = new FormData()
       formData.append('restoreFile', file)
       
+      setActionTitle('Restoring Database Backup...')
+      setActionMessage('Uploading SQL file, re-provisioning schema, and importing all tables and records. Please wait.')
+      setActionLoading(true)
       try {
         const { data } = await api.post(`/api/supabase/${id}/restore`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -857,6 +868,8 @@ export default function SupabasePage() {
         alert(data.message || '✓ Database successfully restored!')
       } catch (err) {
         alert(err.response?.data?.error || err.message)
+      } finally {
+        setActionLoading(false)
       }
     }
     fileInput.click()
@@ -1050,6 +1063,18 @@ export default function SupabasePage() {
             </div>
           </div>
         </div>
+      )}
+      {actionLoading && (
+        <Overlay onClose={() => {}}>
+          <div className="glass-card animate-fade-in" style={{ padding: '32px 48px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, maxWidth: 420 }}>
+            <RefreshCw size={40} className="animate-spin" color="var(--color-primary)" />
+            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900 }}>{actionTitle || 'Processing Action...'}</h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+              {actionMessage || 'This operation may take several seconds. Please do not close or refresh this page.'}
+            </p>
+            <div className="progress-bar-indeterminate" style={{ marginTop: 8 }} />
+          </div>
+        </Overlay>
       )}
     </div>
   )

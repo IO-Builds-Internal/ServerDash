@@ -191,7 +191,7 @@ function Wizard({ onClose, onCreated }) {
         buf = parts.pop()
         parts.forEach(l => { if(l.startsWith('data: ')) setLines(p=>[...p,l.slice(6)]) })
       }
-      setDone(true); onCreated()
+      setDone(true)
     } catch (e) {
       setLines(p=>[...p, `✗ Upload/Network Error: ${e.message}`])
     } finally {
@@ -477,7 +477,11 @@ function Wizard({ onClose, onCreated }) {
           <button className="btn btn-secondary" onClick={()=>step>0?setStep(s=>s-1):onClose()} disabled={deploying}>{step===0?'Cancel':'← Back'}</button>
           {step<2 && <button className="btn btn-primary" onClick={()=>setStep(s=>s+1)} disabled={step===0&&!domain.trim()}>Next →</button>}
           {step===2 && <button className="btn btn-primary" onClick={deploy}>🚀 Deploy Site</button>}
-          {step===3 && done && <button className="btn btn-success" onClick={onClose}>Done ✓</button>}
+          {step===3 && (done || !deploying) && (
+            <button className="btn btn-primary animate-hover" onClick={() => { onCreated(); onClose(); }} style={{ padding: '0 20px', height: 38 }}>
+              {done ? 'Finish & Close ✓' : 'Close & Retry'}
+            </button>
+          )}
         </div>
       </div>
     </Overlay>
@@ -493,6 +497,9 @@ export default function WebsitesPage() {
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
   const [showWizard, setShowWizard] = useState(false)
+  const [actionLoading, setActionLoading] = useState(false)
+  const [actionTitle, setActionTitle] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
 
   const load = useCallback(async () => {
     try {
@@ -509,6 +516,9 @@ export default function WebsitesPage() {
   }, [load])
 
   const downloadSiteBackup = async (id, domain) => {
+    setActionTitle('Packaging Full Website Backup...')
+    setActionMessage(`Archiving all code files, Nginx virtual host records, and compiling the full SQL database for ${domain}. Please wait.`)
+    setActionLoading(true)
     try {
       const token = localAuth.getToken() || ''
       const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/sites/${id}/backup`, {
@@ -525,6 +535,8 @@ export default function WebsitesPage() {
       window.URL.revokeObjectURL(url)
     } catch (e) {
       alert(e.message)
+    } finally {
+      setActionLoading(false)
     }
   }
 
@@ -541,7 +553,9 @@ export default function WebsitesPage() {
       const formData = new FormData()
       formData.append('backupZip', file)
       
-      setLoading(true)
+      setActionTitle('Restoring Full Website from ZIP...')
+      setActionMessage('Uploading archive, recreating root folders, mapping virtual hosts, and reconstructing SQL databases. Please wait.')
+      setActionLoading(true)
       try {
         const { data } = await api.post(`/api/sites/restore`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -551,7 +565,7 @@ export default function WebsitesPage() {
       } catch (err) {
         alert(err.response?.data?.error || err.message)
       } finally {
-        setLoading(false)
+        setActionLoading(false)
       }
     }
     fileInput.click()
@@ -670,6 +684,18 @@ export default function WebsitesPage() {
             </div>
           ))}
         </div>
+      )}
+      {actionLoading && (
+        <Overlay onClose={() => {}}>
+          <div className="glass-card animate-fade-in" style={{ padding: '32px 48px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, maxWidth: 420 }}>
+            <RefreshCw size={40} className="animate-spin" color="var(--color-primary)" />
+            <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900 }}>{actionTitle || 'Processing Action...'}</h3>
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+              {actionMessage || 'This operation may take several seconds. Please do not close or refresh this page.'}
+            </p>
+            <div className="progress-bar-indeterminate" style={{ marginTop: 8 }} />
+          </div>
+        </Overlay>
       )}
     </div>
   )
