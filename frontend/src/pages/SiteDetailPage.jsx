@@ -357,8 +357,8 @@ export default function SiteDetailPage() {
     setMailError(null)
     setMailSuccess(null)
     try {
-      await api.post('/api/smtp/test', { to: testRecipient })
-      setMailSuccess('Test email successfully dispatched to ' + testRecipient)
+      const { data } = await api.post(`/api/sites/${id}/mail/test`, { to: testRecipient })
+      setMailSuccess(data.message)
     } catch (e) {
       setMailError(e.response?.data?.error || e.message)
     } finally {

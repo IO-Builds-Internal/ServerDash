@@ -1290,12 +1290,23 @@ function resolveSiteRoot(id) {
       const fullPath = path.join(sitesDir, file)
       const realPath = fs.realpathSync(fullPath)
       const content = fs.readFileSync(realPath, 'utf8')
-      return parseNginxConfig(content, file)
+      const site = parseNginxConfig(content, file)
+      if (!site.root) {
+        site.root = `/var/www/${site.domain}`
+      }
+      if (!fs.existsSync(site.root)) {
+        try { fs.mkdirSync(site.root, { recursive: true }) } catch (e) {}
+      }
+      return site
     }
   }
   if (id.startsWith('www-')) {
     const domain = id.slice(4)
-    return { id, domain, root: `/var/www/${domain}` }
+    const root = `/var/www/${domain}`
+    if (!fs.existsSync(root)) {
+      try { fs.mkdirSync(root, { recursive: true }) } catch (e) {}
+    }
+    return { id, domain, root }
   }
   return null
 }
@@ -1442,6 +1453,51 @@ router.delete('/:id/mail/forwarder/:source', async (req, res) => {
   await syncPostfixMail(site.domain, meta.mail.mailboxes || [], meta.mail.forwarders)
 
   res.json({ success: true, message: `Email forwarder for '${source}' deleted successfully.` })
+})
+
+// ── POST /api/sites/:id/mail/test ──────────────────────────────────────────────
+router.post('/:id/mail/test', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+  const { to } = req.body
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let smtpConfig = null
+  if (fs.existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+      if (meta.mail && meta.mail.smtp && meta.mail.smtp.host) {
+        smtpConfig = meta.mail.smtp
+      }
+    } catch {}
+  }
+
+  if (!smtpConfig) {
+    return res.status(400).json({ error: 'SMTP relay is not configured for this website.' })
+  }
+
+  try {
+    const nodemailer = require('nodemailer')
+    const transporter = nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: parseInt(smtpConfig.port) || 587,
+      secure: smtpConfig.encryption === 'SSL',
+      auth: { user: smtpConfig.username, pass: smtpConfig.password },
+      tls: smtpConfig.encryption === 'TLS' ? { rejectUnauthorized: false } : undefined,
+    })
+
+    await transporter.sendMail({
+      from: smtpConfig.username || `noreply@${site.domain}`,
+      to,
+      subject: `ServerDash Test Email for ${site.domain}`,
+      text: `This is a test email using the custom isolated SMTP server configuration for ${site.domain}.`,
+      html: `<h2>ServerDash Isolated SMTP Test</h2><p>Your website-specific SMTP configurations for <strong>${site.domain}</strong> are working correctly. ✓</p>`,
+    })
+
+    res.json({ success: true, message: 'Test email successfully sent using domain SMTP settings!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 module.exports = router
