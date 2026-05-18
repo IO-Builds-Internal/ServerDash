@@ -136,7 +136,7 @@ function SupabaseWizard({ onClose, onCreated }) {
 
               <div style={{ gridColumn: '1 / -1' }}>
                 <label className="label">Public URL (Optional)</label>
-                <input className="input" value={form.publicUrl} onChange={e => set('publicUrl', e.target.value)} placeholder="http://213.199.34.74:8100  (auto-detected if blank)" />
+                <input className="input" value={form.publicUrl} onChange={e => set('publicUrl', e.target.value)} placeholder="http://your-vps-ip:8100  (auto-detected if blank)" />
                 <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Leave blank to use your server IP with auto-allocated port. Use a domain if you have one set up.</p>
               </div>
 
