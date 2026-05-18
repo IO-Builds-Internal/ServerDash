@@ -356,9 +356,29 @@ router.get('/serverdash-update/status', async (req, res) => {
         if (cleanLocal !== cleanRemote) {
           releaseUpdateAvailable = true
         }
+      } else {
+        throw new Error('No release tag found')
       }
     } catch (e) {
-      // Graceful fallback if no GitHub releases exist yet / request rate-limited
+      // Fallback: Query tags endpoint
+      try {
+        const axios = require('axios')
+        const tagsRes = await axios.get('https://api.github.com/repos/iobuilds/ServerDash/tags', {
+          headers: { 'User-Agent': 'ServerDash-Updater' },
+          timeout: 4000
+        })
+        if (tagsRes.data && tagsRes.data.length > 0) {
+          latestReleaseTag = tagsRes.data[0].name
+          latestReleaseName = tagsRes.data[0].name
+          
+          const cleanLocal = localVersion.replace('v', '').trim()
+          const cleanRemote = latestReleaseTag.replace('v', '').trim()
+          
+          if (cleanLocal !== cleanRemote) {
+            releaseUpdateAvailable = true
+          }
+        }
+      } catch (err) {}
     }
 
     res.json({
