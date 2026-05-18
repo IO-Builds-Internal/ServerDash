@@ -301,4 +301,119 @@ router.get('/exec-stream', async (req, res) => {
   req.on('close', () => child.kill())
 })
 
+// GET /api/packages/serverdash-update/status — check git repository updates
+router.get('/serverdash-update/status', async (req, res) => {
+  try {
+    try {
+      await execAsync('git fetch origin main', { cwd: '/root/ServerDash', timeout: 5000 })
+    } catch (e) {
+      // Ignore network/keys errors
+    }
+
+    const { stdout: localHead } = await execAsync('git rev-parse HEAD', { cwd: '/root/ServerDash' })
+    const { stdout: remoteHead } = await execAsync('git rev-parse origin/main', { cwd: '/root/ServerDash' })
+    const { stdout: localMsg } = await execAsync('git log -1 --oneline', { cwd: '/root/ServerDash' })
+    
+    let remoteMsg = ''
+    try {
+      const { stdout } = await execAsync('git log -1 origin/main --oneline', { cwd: '/root/ServerDash' })
+      remoteMsg = stdout.trim()
+    } catch {
+      remoteMsg = '—'
+    }
+
+    const currentHash = localHead.trim()
+    const latestHash = remoteHead.trim()
+    const updateAvailable = currentHash !== latestHash
+
+    const { stdout: repoUrl } = await execAsync('git remote get-url origin', { cwd: '/root/ServerDash' })
+
+    res.json({
+      currentCommit: currentHash.substring(0, 7),
+      currentMsg: localMsg.trim().substring(8),
+      latestCommit: latestHash.substring(0, 7),
+      latestMsg: remoteMsg.substring(8),
+      updateAvailable,
+      repoUrl: repoUrl.trim()
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/packages/serverdash-update/run — streams self-upgrade actions
+router.get('/serverdash-update/run', async (req, res) => {
+  const send = sseSetup(res)
+  send('▶ Starting ServerDash Panel Automated Self-Upgrade…')
+
+  try {
+    send('\n[1/5] Pulling latest repository files from upstream origin/main…')
+    const pullProcess = spawn('git', ['pull', 'origin', 'main'], { cwd: '/root/ServerDash' })
+    
+    pullProcess.stdout.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(`  ${l}`)))
+    pullProcess.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(`  ${l}`)))
+
+    pullProcess.on('close', async (code) => {
+      if (code !== 0) {
+        send(`✗ Git pull failed with code: ${code}. Aborting upgrade.`)
+        return res.end()
+      }
+
+      send('\n[2/5] Installing new ServerDash npm dependencies…')
+      send('  - Upgrading backend packages…')
+      
+      const npmInstallBackend = spawn('npm', ['install', '--production=false'], { cwd: '/root/ServerDash/backend' })
+      
+      npmInstallBackend.on('close', async (backendCode) => {
+        send('  - Upgrading frontend packages…')
+        const npmInstallFrontend = spawn('npm', ['install'], { cwd: '/root/ServerDash/frontend' })
+        
+        npmInstallFrontend.on('close', async (frontendCode) => {
+          
+          send('\n[3/5] Compiling updated static React UI bundle…')
+          const buildProcess = spawn('npm', ['run', 'build'], { cwd: '/root/ServerDash/frontend' })
+          buildProcess.stdout.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(`  ${l}`)))
+          
+          buildProcess.on('close', async (buildCode) => {
+            if (buildCode !== 0) {
+              send(`✗ Production bundle compilation failed. Aborting.`)
+              return res.end()
+            }
+
+            send('\n[4/5] Synchronizing new interface assets to Nginx public paths…')
+            try {
+              await execAsync('cp -r /root/ServerDash/frontend/dist/* /var/www/serverdash/dist/')
+              await execAsync('chown -R www-data:www-data /var/www/serverdash && chmod -R 755 /var/www/serverdash')
+              send('  ✓ Distribution files synced successfully')
+            } catch (copyErr) {
+              send(`✗ Failed syncing compiled assets: ${copyErr.message}`)
+              return res.end()
+            }
+
+            send('\n[5/5] Hot-reloading active Nginx servers and restarting panel daemon…')
+            try {
+              await execAsync('systemctl reload nginx')
+              send('  ✓ Nginx reloaded safely')
+            } catch (nginxErr) {
+              send(`  ⚠ Nginx reload skipped/failed: ${nginxErr.message}`)
+            }
+
+            send('  ✓ Upgraded backend PM2 daemon restarted')
+            send('\n🏆 SUCCESS: ServerDash panel upgraded to the latest version!')
+            res.end()
+
+            setTimeout(() => {
+              exec('pm2 restart serverdash-backend')
+            }, 1000)
+          })
+        })
+      })
+    })
+
+  } catch (err) {
+    send(`✗ Failed with critical exception: ${err.message}`)
+    res.end()
+  }
+})
+
 module.exports = router

@@ -137,11 +137,13 @@ function useSSEStream() {
 }
 
 export default function PackagesPage() {
-  // Tabs: 'install' | 'installed' | 'zip' | 'exec'
+  // Tabs: 'install' | 'installed' | 'zip' | 'git' | 'exec' | 'panel'
   const [tab, setTab] = useState('install')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searching, setSearching] = useState(false)
+  const [updateStatus, setUpdateStatus] = useState(null)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [installed, setInstalled] = useState([])
   const [loadingInstalled, setLoadingInstalled] = useState(false)
   const [pkgFilter, setPkgFilter] = useState('')
@@ -184,6 +186,21 @@ export default function PackagesPage() {
 
   useEffect(() => {
     if (tab === 'installed') loadInstalled()
+  }, [tab])
+
+  const checkPanelUpdate = async () => {
+    setCheckingUpdate(true)
+    try {
+      const r = await api.get('/api/packages/serverdash-update/status')
+      setUpdateStatus(r.data)
+    } catch (e) {
+      console.error(e)
+    }
+    setCheckingUpdate(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'panel') checkPanelUpdate()
   }, [tab])
 
   const install = (pkg) => {
@@ -272,6 +289,9 @@ export default function PackagesPage() {
         </button>
         <button className={`tab ${tab === 'exec' ? 'active' : ''}`} onClick={() => setTab('exec')}>
           ⌨️ Administrative Shell
+        </button>
+        <button className={`tab ${tab === 'panel' ? 'active' : ''}`} onClick={() => setTab('panel')}>
+          🛡️ ServerDash Updates
         </button>
       </div>
 
@@ -609,6 +629,113 @@ export default function PackagesPage() {
                 {running ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
                 {running ? 'Cloning & Deploying...' : 'Clone & Auto-Build'}
               </button>
+            </div>
+
+            <div>
+              <TermOutput lines={lines} running={running} onClear={clear} onStop={stop} height={380} />
+            </div>
+          </div>
+        )}
+
+        {/* TAB 6: SERVERDASH SELF-UPGRADE */}
+        {tab === 'panel' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>ServerDash Self-Upgrades</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+                  Track repository releases and trigger hot automated updates directly from Git.
+                </p>
+              </div>
+
+              {checkingUpdate ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                  <RefreshCw size={20} className="animate-spin" style={{ display: 'block', margin: '0 auto 10px' }} />
+                  Querying git status tracking updates from upstream branch...
+                </div>
+              ) : !updateStatus ? (
+                <div style={{ padding: 20, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                  Failed to query repository status.
+                </div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  
+                  {/* Status Badge */}
+                  <div style={{ 
+                    padding: 14, borderRadius: 10, 
+                    background: updateStatus.updateAvailable ? 'rgba(245,158,11,0.05)' : 'rgba(16,185,129,0.05)',
+                    border: updateStatus.updateAvailable ? '1px solid rgba(245,158,11,0.15)' : '1px solid rgba(16,185,129,0.15)',
+                    color: updateStatus.updateAvailable ? '#f59e0b' : '#10b981',
+                    display: 'flex', alignItems: 'center', gap: 10
+                  }}>
+                    {updateStatus.updateAvailable ? <AlertTriangle size={18} /> : <CheckCircle size={18} />}
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+                      {updateStatus.updateAvailable 
+                        ? 'Panel Update Available! A new stable release is ready to build.' 
+                        : 'ServerDash is up-to-date! You are running the latest stable release.'
+                      }
+                    </span>
+                  </div>
+
+                  {/* Git Info Box */}
+                  <div style={{ background: 'rgba(255,255,255,0.02)', padding: 16, borderRadius: 10, border: '1px solid var(--color-border)', fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <span style={{ color: 'var(--color-text-muted)' }}>Git Remote Upstream:</span>
+                      <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{updateStatus.repoUrl}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
+                      <span style={{ color: 'var(--color-text-muted)' }}>Current Local Commit:</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <code style={{ background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                          {updateStatus.currentCommit}
+                        </code>
+                        <span style={{ color: 'var(--color-text-dim)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.currentMsg}>
+                          ({updateStatus.currentMsg})
+                        </span>
+                      </span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
+                      <span style={{ color: 'var(--color-text-muted)' }}>Latest Git Release:</span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <code style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--color-primary)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                          {updateStatus.latestCommit}
+                        </code>
+                        <span style={{ color: 'var(--color-text-dim)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.latestMsg}>
+                          ({updateStatus.latestMsg})
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Upgrade trigger button */}
+                  <div style={{ marginTop: 10, display: 'flex', gap: 12 }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => stream(`${BASE}/api/packages/serverdash-update/run`)}
+                      disabled={running}
+                      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', fontSize: '0.88rem' }}
+                    >
+                      <Play size={14} /> {running ? 'Upgrading Panel...' : 'Pull & Run Automated Upgrade'}
+                    </button>
+                    
+                    <button
+                      className="btn btn-secondary"
+                      onClick={checkPanelUpdate}
+                      disabled={running || checkingUpdate}
+                    >
+                      <RefreshCw size={14} className={checkingUpdate ? 'animate-spin' : ''} /> Check Again
+                    </button>
+                  </div>
+
+                  {lines.some(l => l.includes('🏆 SUCCESS')) && (
+                    <div style={{ marginTop: 10, background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.2)', padding: 14, borderRadius: 10, color: '#10b981', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: 8 }} className="animate-pulse">
+                      <CheckCircle size={15} />
+                      <span>Upgrade complete! Relaying process connections. The panel will automatically reload in 5 seconds...</span>
+                    </div>
+                  )}
+
+                </div>
+              )}
             </div>
 
             <div>
