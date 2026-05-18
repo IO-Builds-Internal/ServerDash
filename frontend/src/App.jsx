@@ -16,6 +16,7 @@ import SmtpPage from './pages/SmtpPage'
 import SettingsPage from './pages/SettingsPage'
 import SiteDetailPage from './pages/SiteDetailPage'
 import PortsPage from './pages/PortsPage'
+import FtpPage from './pages/FtpPage'
 import { Server } from 'lucide-react'
 import { BrandingProvider, useBranding } from './contexts/BrandingContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -31,6 +32,7 @@ function DashboardLayout() {
           <Route path="/overview" element={<OverviewPage onConnectionChange={setConnected} />} />
           <Route path="/websites" element={<WebsitesPage />} />
           <Route path="/websites/manage/:id" element={<SiteDetailPage />} />
+          <Route path="/ftp" element={<FtpPage />} />
           <Route path="/packages" element={<PackagesPage />} />
           <Route path="/files" element={<FilesPage />} />
           <Route path="/docker" element={<DockerPage />} />

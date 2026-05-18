@@ -1210,4 +1210,238 @@ if __name__ == '__main__':
   res.end()
 })
 
+async function syncPostfixMail(domain, mailboxes = [], forwarders = []) {
+  try {
+    // 1. Sync vmailbox
+    const vmailboxPath = '/etc/postfix/vmailbox'
+    let vmailboxContent = ''
+    if (fs.existsSync(vmailboxPath)) {
+      vmailboxContent = fs.readFileSync(vmailboxPath, 'utf8')
+    }
+    // Filter out existing domain lines
+    let vmailLines = vmailboxContent.split('\n').filter(line => {
+      const trim = line.trim()
+      if (!trim || trim.startsWith('#')) return true
+      return !trim.includes(`@${domain}`)
+    })
+    // Append current mailboxes
+    mailboxes.forEach(m => {
+      vmailLines.push(`${m.username}@${domain}   ${domain}/${m.username}/`)
+    })
+    fs.writeFileSync(vmailboxPath, vmailLines.join('\n') + '\n', 'utf8')
+
+    // 2. Sync virtual (forwarders)
+    const virtualPath = '/etc/postfix/virtual'
+    let virtualContent = ''
+    if (fs.existsSync(virtualPath)) {
+      virtualContent = fs.readFileSync(virtualPath, 'utf8')
+    }
+    // Filter out existing domain lines
+    let virtualLines = virtualContent.split('\n').filter(line => {
+      const trim = line.trim()
+      if (!trim || trim.startsWith('#')) return true
+      return !trim.includes(`@${domain}`)
+    })
+    // Append current forwarders
+    forwarders.forEach(f => {
+      virtualLines.push(`${f.source}@${domain}   ${f.target}`)
+    })
+    fs.writeFileSync(virtualPath, virtualLines.join('\n') + '\n', 'utf8')
+
+    // Ensure virtual_mailbox_domains is configured in main.cf
+    try {
+      let mainCf = fs.readFileSync('/etc/postfix/main.cf', 'utf8')
+      let changed = false
+      if (!mainCf.includes('virtual_mailbox_domains')) {
+        mainCf += `\nvirtual_mailbox_domains = hash:/etc/postfix/vmail_domains\nvirtual_mailbox_base = /var/mail/vhosts\nvirtual_mailbox_maps = hash:/etc/postfix/vmailbox\nvirtual_minimum_uid = 100\nvirtual_uid_maps = static:5000\nvirtual_gid_maps = static:5000\n`
+        changed = true
+      }
+      if (!mainCf.includes('virtual_alias_maps')) {
+        mainCf += `\nvirtual_alias_maps = hash:/etc/postfix/virtual\n`
+        changed = true
+      }
+      if (changed) {
+        fs.writeFileSync('/etc/postfix/main.cf', mainCf, 'utf8')
+      }
+      
+      // Ensure vmail_domains list contains the domain
+      const domainsPath = '/etc/postfix/vmail_domains'
+      let domsContent = fs.existsSync(domainsPath) ? fs.readFileSync(domainsPath, 'utf8') : ''
+      if (!domsContent.includes(domain)) {
+        domsContent += `${domain} OK\n`
+        fs.writeFileSync(domainsPath, domsContent, 'utf8')
+      }
+    } catch {}
+
+    // Postmap and system reload
+    await execAsync('postmap /etc/postfix/vmailbox && postmap /etc/postfix/virtual && postmap /etc/postfix/vmail_domains && systemctl reload postfix').catch(() => {})
+  } catch (err) {
+    logger.error('Error syncing Postfix mail configs', { error: err.message })
+  }
+}
+
+// Helper to resolve site details
+function resolveSiteRoot(id) {
+  const sitesDir = '/etc/nginx/sites-enabled'
+  const files = fs.readdirSync(sitesDir).filter(f => !f.startsWith('.'))
+  for (const file of files) {
+    const parsedId = file.replace(/[^a-z0-9]/gi, '-')
+    if (parsedId === id) {
+      const fullPath = path.join(sitesDir, file)
+      const realPath = fs.realpathSync(fullPath)
+      const content = fs.readFileSync(realPath, 'utf8')
+      return parseNginxConfig(content, file)
+    }
+  }
+  if (id.startsWith('www-')) {
+    const domain = id.slice(4)
+    return { id, domain, root: `/var/www/${domain}` }
+  }
+  return null
+}
+
+// ── GET /api/sites/:id/mail ───────────────────────────────────────────────────
+router.get('/:id/mail', (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let mailSettings = { smtp: { host: '', port: '587', username: '', password: '', encryption: 'TLS' }, mailboxes: [], forwarders: [] }
+
+  if (fs.existsSync(metaPath)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+      if (meta.mail) mailSettings = { ...mailSettings, ...meta.mail }
+    } catch {}
+  }
+
+  // Safe mapping - hide passwords
+  const safeMailboxes = (mailSettings.mailboxes || []).map(({ password, ...safe }) => safe)
+  res.json({ ...mailSettings, mailboxes: safeMailboxes, domain: site.domain })
+})
+
+// ── POST /api/sites/:id/mail/smtp ──────────────────────────────────────────────
+router.post('/:id/mail/smtp', (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let meta = {}
+  if (fs.existsSync(metaPath)) {
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
+  }
+
+  if (!meta.mail) meta.mail = { smtp: {}, mailboxes: [], forwarders: [] }
+  meta.mail.smtp = req.body
+
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+  res.json({ success: true, message: 'SMTP configurations saved successfully.' })
+})
+
+// ── POST /api/sites/:id/mail/mailbox ───────────────────────────────────────────
+router.post('/:id/mail/mailbox', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+  const { username, password } = req.body
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password are required.' })
+  }
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let meta = {}
+  if (fs.existsSync(metaPath)) {
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
+  }
+
+  if (!meta.mail) meta.mail = { smtp: {}, mailboxes: [], forwarders: [] }
+  if (!meta.mail.mailboxes) meta.mail.mailboxes = []
+
+  if (meta.mail.mailboxes.some(m => m.username.toLowerCase() === username.toLowerCase())) {
+    return res.status(400).json({ error: 'Mailbox account username already exists.' })
+  }
+
+  meta.mail.mailboxes.push({ username, password, createdAt: new Date().toISOString() })
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+  await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+
+  res.json({ success: true, message: `Virtual mailbox '${username}@${site.domain}' successfully created.` })
+})
+
+// ── DELETE /api/sites/:id/mail/mailbox/:username ────────────────────────────────
+router.delete('/:id/mail/mailbox/:username', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+  const username = req.params.username
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let meta = {}
+  if (fs.existsSync(metaPath)) {
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
+  }
+
+  if (!meta.mail || !meta.mail.mailboxes) return res.status(400).json({ error: 'No mailboxes found' })
+
+  meta.mail.mailboxes = meta.mail.mailboxes.filter(m => m.username.toLowerCase() !== username.toLowerCase())
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+  await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+
+  res.json({ success: true, message: `Virtual mailbox '${username}' deleted successfully.` })
+})
+
+// ── POST /api/sites/:id/mail/forwarder ─────────────────────────────────────────
+router.post('/:id/mail/forwarder', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+  const { source, target } = req.body
+
+  if (!source || !target) {
+    return res.status(400).json({ error: 'Source alias and target email are required.' })
+  }
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let meta = {}
+  if (fs.existsSync(metaPath)) {
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
+  }
+
+  if (!meta.mail) meta.mail = { smtp: {}, mailboxes: [], forwarders: [] }
+  if (!meta.mail.forwarders) meta.mail.forwarders = []
+
+  if (meta.mail.forwarders.some(f => f.source.toLowerCase() === source.toLowerCase())) {
+    return res.status(400).json({ error: 'Forwarder source alias already exists.' })
+  }
+
+  meta.mail.forwarders.push({ source, target, createdAt: new Date().toISOString() })
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+  await syncPostfixMail(site.domain, meta.mail.mailboxes || [], meta.mail.forwarders)
+
+  res.json({ success: true, message: `Email forwarder '${source}@${site.domain}' -> '${target}' created.` })
+})
+
+// ── DELETE /api/sites/:id/mail/forwarder/:source ────────────────────────────────
+router.delete('/:id/mail/forwarder/:source', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+  const source = req.params.source
+
+  const metaPath = path.join(site.root, '.serverdash.json')
+  let meta = {}
+  if (fs.existsSync(metaPath)) {
+    try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
+  }
+
+  if (!meta.mail || !meta.mail.forwarders) return res.status(400).json({ error: 'No forwarders found' })
+
+  meta.mail.forwarders = meta.mail.forwarders.filter(f => f.source.toLowerCase() !== source.toLowerCase())
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+  await syncPostfixMail(site.domain, meta.mail.mailboxes || [], meta.mail.forwarders)
+
+  res.json({ success: true, message: `Email forwarder for '${source}' deleted successfully.` })
+})
+
 module.exports = router

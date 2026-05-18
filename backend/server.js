@@ -145,6 +145,7 @@ const filesRouter = require('./src/routes/files')
 const smtpRouter = require('./src/routes/smtp')
 const supabaseRouter = require('./src/routes/supabase')
 const portsRouter = require('./src/routes/ports')
+const ftpRouter = require('./src/routes/ftp')
 
 // Apply auth to all /api routes below this point
 app.use('/api', authMiddleware)
@@ -158,6 +159,7 @@ app.use('/api/files', filesRouter)
 app.use('/api/smtp', smtpRouter)
 app.use('/api/supabase', supabaseRouter)
 app.use('/api/ports', portsRouter)
+app.use('/api/ftp', ftpRouter)
 
 // Settings (persisted file store)
 const SETTINGS_FILE = path.join(__dirname, 'data', 'settings.json')

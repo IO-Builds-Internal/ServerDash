@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard, Globe, Package, FolderOpen, Container,
   Database, Mail, Settings, ChevronLeft, ChevronRight,
-  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon
+  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon, HardDrive
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -12,6 +12,7 @@ import { useTheme } from '../contexts/ThemeContext'
 const navItems = [
   { path: '/overview', icon: LayoutDashboard, label: 'Overview' },
   { path: '/websites', icon: Globe, label: 'Websites' },
+  { path: '/ftp', icon: HardDrive, label: 'FTP Accounts' },
   { path: '/packages', icon: Package, label: 'Packages' },
   { path: '/files', icon: FolderOpen, label: 'File Manager' },
   { path: '/docker', icon: Container, label: 'Docker Apps' },

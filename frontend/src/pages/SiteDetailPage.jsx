@@ -7,7 +7,7 @@ import {
   Terminal, FileCode, RotateCcw, Save, Trash2, ExternalLink, 
   AlertTriangle, Wrench, Shield, Check, X, RefreshCw, Eye, EyeOff,
   GitBranch, GitCommit, GitPullRequest, Code, Settings, Plus, Key, Copy, HelpCircle,
-  Cpu, HardDrive, Lock, Database
+  Cpu, HardDrive, Lock, Database, Mail, Send
 } from 'lucide-react'
 
 export default function SiteDetailPage() {
@@ -47,6 +47,19 @@ export default function SiteDetailPage() {
   const [newEnvKey, setNewEnvKey] = useState('')
   const [newEnvVal, setNewEnvVal] = useState('')
   const [maskedKeys, setMaskedKeys] = useState({})
+
+  // Domain Mail/SMTP States
+  const [mailSettings, setMailSettings] = useState({ smtp: { host: '', port: '587', username: '', password: '', encryption: 'TLS' }, mailboxes: [], forwarders: [], domain: '' })
+  const [mailLoading, setMailLoading] = useState(false)
+  const [mailError, setMailError] = useState(null)
+  const [mailSuccess, setMailSuccess] = useState(null)
+  const [mailBusy, setMailBusy] = useState(false)
+  const [mailboxForm, setMailboxForm] = useState({ username: '', password: '' })
+  const [forwarderForm, setForwarderForm] = useState({ source: '', target: '' })
+  const [smtpSaved, setSmtpSaved] = useState(false)
+  const [smtpSaving, setSmtpSaving] = useState(false)
+  const [testRecipient, setTestRecipient] = useState('')
+  const [testBusy, setTestBusy] = useState(false)
 
   // Nginx Config Editor state
   const [configContent, setConfigContent] = useState('')
@@ -240,6 +253,119 @@ export default function SiteDetailPage() {
     }
   }
 
+  const loadMail = async () => {
+    setMailLoading(true)
+    setMailError(null)
+    try {
+      const { data } = await api.get(`/api/sites/${id}/mail`)
+      setMailSettings(data)
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setMailLoading(false)
+    }
+  }
+
+  const saveMailSmtp = async (e) => {
+    e.preventDefault()
+    setSmtpSaving(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      const { data } = await api.post(`/api/sites/${id}/mail/smtp`, mailSettings.smtp)
+      setMailSuccess(data.message)
+      setSmtpSaved(true)
+      setTimeout(() => setSmtpSaved(false), 3000)
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setSmtpSaving(false)
+    }
+  }
+
+  const createMailbox = async (e) => {
+    e.preventDefault()
+    if (!mailboxForm.username || !mailboxForm.password) return
+    setMailBusy(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      const { data } = await api.post(`/api/sites/${id}/mail/mailbox`, mailboxForm)
+      setMailSuccess(data.message)
+      setMailboxForm({ username: '', password: '' })
+      await loadMail()
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setMailBusy(false)
+    }
+  }
+
+  const deleteMailbox = async (username) => {
+    if (!confirm(`Are you sure you want to delete mailbox '${username}'?`)) return
+    setMailBusy(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      const { data } = await api.delete(`/api/sites/${id}/mail/mailbox/${username}`)
+      setMailSuccess(data.message)
+      await loadMail()
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setMailBusy(false)
+    }
+  }
+
+  const createForwarder = async (e) => {
+    e.preventDefault()
+    if (!forwarderForm.source || !forwarderForm.target) return
+    setMailBusy(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      const { data } = await api.post(`/api/sites/${id}/mail/forwarder`, forwarderForm)
+      setMailSuccess(data.message)
+      setForwarderForm({ source: '', target: '' })
+      await loadMail()
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setMailBusy(false)
+    }
+  }
+
+  const deleteForwarder = async (source) => {
+    if (!confirm(`Are you sure you want to delete the email forwarder for '${source}'?`)) return
+    setMailBusy(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      const { data } = await api.delete(`/api/sites/${id}/mail/forwarder/${source}`)
+      setMailSuccess(data.message)
+      await loadMail()
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setMailBusy(false)
+    }
+  }
+
+  const testDomainMail = async () => {
+    if (!testRecipient) return
+    setTestBusy(true)
+    setMailError(null)
+    setMailSuccess(null)
+    try {
+      await api.post('/api/smtp/test', { to: testRecipient })
+      setMailSuccess('Test email successfully dispatched to ' + testRecipient)
+    } catch (e) {
+      setMailError(e.response?.data?.error || e.message)
+    } finally {
+      setTestBusy(false)
+    }
+  }
+
   useEffect(() => {
     setLoading(true)
     loadSite()
@@ -247,6 +373,7 @@ export default function SiteDetailPage() {
     loadEnv()
     loadBuildSettings()
     loadGit()
+    loadMail()
   }, [id])
 
   useEffect(() => {
@@ -438,6 +565,9 @@ export default function SiteDetailPage() {
         </button>
         <button className={`tab ${activeTab === 'nginx' ? 'active' : ''}`} onClick={() => setActiveTab('nginx')}>
           Nginx Config
+        </button>
+        <button className={`tab ${activeTab === 'mail' ? 'active' : ''}`} onClick={() => setActiveTab('mail')}>
+          Mail & SMTP Settings
         </button>
       </div>
 
@@ -1093,6 +1223,294 @@ export default function SiteDetailPage() {
                 />
               )}
             </div>
+          </div>
+        )}
+
+        {/* TAB 7: MAIL & SMTP SETTINGS */}
+        {activeTab === 'mail' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            
+            {/* Notifications */}
+            {mailError && (
+              <div style={{ padding: '14px 20px', borderRadius: 12, background: 'rgba(239,68,68,0.03)', border: '1px solid rgba(239,68,68,0.15)', color: 'var(--color-danger)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <AlertTriangle size={16} />
+                <span>Error: {mailError}</span>
+              </div>
+            )}
+            {mailSuccess && (
+              <div style={{ padding: '14px 20px', borderRadius: 12, background: 'rgba(16,185,129,0.03)', border: '1px solid rgba(16,185,129,0.15)', color: 'var(--color-success)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Check size={16} />
+                <span>{mailSuccess}</span>
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 24, alignItems: 'start' }}>
+              
+              {/* Left Side: SMTP Relay settings for this domain */}
+              <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Mail size={18} color="var(--color-primary)" />
+                    Domain Outbound SMTP Relay
+                  </h3>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                    Configure dedicated outbound SMTP credentials specifically for this site to dispatch transactional emails safely.
+                  </p>
+                </div>
+
+                <form onSubmit={saveMailSmtp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label className="label">SMTP Host</label>
+                    <input
+                      className="input"
+                      value={mailSettings.smtp?.host || ''}
+                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, host: e.target.value } }))}
+                      placeholder="smtp.gmail.com"
+                    />
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label className="label">Port</label>
+                      <input
+                        className="input"
+                        type="number"
+                        value={mailSettings.smtp?.port || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, port: e.target.value } }))}
+                        placeholder="587"
+                      />
+                    </div>
+                    <div>
+                      <label className="label">Encryption</label>
+                      <select
+                        className="input"
+                        value={mailSettings.smtp?.encryption || 'TLS'}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, encryption: e.target.value } }))}
+                      >
+                        <option>TLS</option>
+                        <option>SSL</option>
+                        <option>None</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="label">Username</label>
+                    <input
+                      className="input"
+                      value={mailSettings.smtp?.username || ''}
+                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, username: e.target.value } }))}
+                      placeholder="e.g. info@domain.com"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Password</label>
+                    <input
+                      className="input"
+                      type="password"
+                      value={mailSettings.smtp?.password || ''}
+                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, password: e.target.value } }))}
+                      placeholder="••••••••"
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" disabled={smtpSaving} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6 }}>
+                    {smtpSaving ? <RefreshCw size={14} className="animate-spin" /> : smtpSaved ? <Check size={14} /> : <Save size={14} />}
+                    {smtpSaving ? 'Saving Configurations...' : smtpSaved ? 'Saved Successfully' : 'Save SMTP Settings'}
+                  </button>
+                </form>
+
+                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 18, marginTop: 4 }}>
+                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.04em' }}>
+                    Quick Connection Test
+                  </h4>
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <input
+                      className="input"
+                      style={{ flex: 1, height: 36, fontSize: '0.8rem' }}
+                      value={testRecipient}
+                      onChange={e => setTestRecipient(e.target.value)}
+                      placeholder="Recipient email address..."
+                    />
+                    <button className="btn btn-secondary" onClick={testDomainMail} disabled={testBusy || !testRecipient} style={{ height: 36, fontSize: '0.8rem', padding: '0 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {testBusy ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                      Test
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Side: Virtual Mailboxes & Aliases (Postfix) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                
+                {/* Provision Virtual Mailbox Card */}
+                <div className="glass-card" style={{ padding: 24 }}>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Plus size={18} color="var(--color-primary)" />
+                    Provision Domain Mailbox
+                  </h3>
+                  <p style={{ margin: '0 0 18px 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                    Create dynamic local virtual mailboxes mapped to the domain <strong>{mailSettings.domain || site.domain}</strong>.
+                  </p>
+
+                  <form onSubmit={createMailbox} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 200px' }}>
+                      <label className="label">Mailbox Username</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          className="input"
+                          style={{ textAlign: 'right' }}
+                          value={mailboxForm.username}
+                          onChange={e => setMailboxForm(prev => ({ ...prev, username: e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))}
+                          placeholder="e.g. info"
+                          required
+                        />
+                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings.domain || site.domain}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: '1 1 200px' }}>
+                      <label className="label">Password</label>
+                      <input
+                        className="input"
+                        type="password"
+                        value={mailboxForm.password}
+                        onChange={e => setMailboxForm(prev => ({ ...prev, password: e.target.value }))}
+                        placeholder="Password..."
+                        required
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" disabled={mailBusy} style={{ height: 38, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Plus size={14} /> Provision
+                    </button>
+                  </form>
+                </div>
+
+                {/* Provision Email Alias/Forwarder Card */}
+                <div className="glass-card" style={{ padding: 24 }}>
+                  <h3 style={{ margin: '0 0 4px 0', fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Send size={18} color="var(--color-primary)" />
+                    Create Email Alias / Forwarder
+                  </h3>
+                  <p style={{ margin: '0 0 18px 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                    Instantly forward incoming domain mail aliases to external targets with zero setup friction.
+                  </p>
+
+                  <form onSubmit={createForwarder} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div style={{ flex: '1 1 180px' }}>
+                      <label className="label">Alias Source</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <input
+                          className="input"
+                          style={{ textAlign: 'right' }}
+                          value={forwarderForm.source}
+                          onChange={e => setForwarderForm(prev => ({ ...prev, source: e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, '') }))}
+                          placeholder="e.g. contact"
+                          required
+                        />
+                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings.domain || site.domain}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ flex: '1 1 220px' }}>
+                      <label className="label">Forward Target Email</label>
+                      <input
+                        className="input"
+                        type="email"
+                        value={forwarderForm.target}
+                        onChange={e => setForwarderForm(prev => ({ ...prev, target: e.target.value }))}
+                        placeholder="e.g. myname@gmail.com"
+                        required
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" disabled={mailBusy} style={{ height: 38, padding: '0 20px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Plus size={14} /> Add Forwarder
+                    </button>
+                  </form>
+                </div>
+
+                {/* Mailboxes and Forwarders Inventory list */}
+                <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
+                  <div style={{ padding: 20, borderBottom: '1px solid var(--color-border)' }}>
+                    <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800 }}>Domain Email Accounts & Forwarders</h4>
+                  </div>
+
+                  {mailLoading ? (
+                    <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                      <RefreshCw size={18} className="animate-spin" style={{ margin: '0 auto 8px auto', opacity: 0.4 }} />
+                      Loading configured email records...
+                    </div>
+                  ) : (!mailSettings.mailboxes || mailSettings.mailboxes.length === 0) && (!mailSettings.forwarders || mailSettings.forwarders.length === 0) ? (
+                    <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                      No virtual mailboxes or aliases configured for this domain yet.
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                      <thead>
+                        <tr style={{ background: 'rgba(255,255,255,0.01)', borderBottom: '1px solid var(--color-border)' }}>
+                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Email Record</th>
+                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Record Type</th>
+                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Scope Target</th>
+                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase', width: 80, textAlign: 'right' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Render Mailboxes */}
+                        {mailSettings.mailboxes?.map((m) => (
+                          <tr key={m.username} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                            <td style={{ padding: '12px 16px', fontSize: '0.82rem', fontWeight: 700 }}>
+                              {m.username}@{mailSettings.domain || site.domain}
+                            </td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>Local Mailbox</span>
+                            </td>
+                            <td style={{ padding: '12px 16px', fontSize: '0.78rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                              /var/mail/vhosts/{site.domain}/{m.username}/
+                            </td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => deleteMailbox(m.username)}
+                                style={{ color: 'var(--color-danger)', borderColor: 'rgba(239,68,68,0.2)', padding: '2px 8px', fontSize: '0.7rem' }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+
+                        {/* Render Forwarders */}
+                        {mailSettings.forwarders?.map((f) => (
+                          <tr key={f.source} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                            <td style={{ padding: '12px 16px', fontSize: '0.82rem', fontWeight: 700 }}>
+                              {f.source}@{mailSettings.domain || site.domain}
+                            </td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>Email Forwarder</span>
+                            </td>
+                            <td style={{ padding: '12px 16px', fontSize: '0.82rem', color: 'var(--color-primary)', fontWeight: 600 }}>
+                              ➜ {f.target}
+                            </td>
+                            <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => deleteForwarder(f.source)}
+                                style={{ color: 'var(--color-danger)', borderColor: 'rgba(239,68,68,0.2)', padding: '2px 8px', fontSize: '0.7rem' }}
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+
+              </div>
+
+            </div>
+
           </div>
         )}
       </div>
