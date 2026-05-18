@@ -18,6 +18,7 @@ import SiteDetailPage from './pages/SiteDetailPage'
 import PortsPage from './pages/PortsPage'
 import { Server } from 'lucide-react'
 import { BrandingProvider, useBranding } from './contexts/BrandingContext'
+import { ThemeProvider } from './contexts/ThemeContext'
 
 function DashboardLayout() {
   const [connected, setConnected] = useState(true)
@@ -97,11 +98,13 @@ function AppInner() {
 export default function App() {
   return (
     <BrowserRouter>
-      <BrandingProvider>
-        <AuthProvider>
-          <AppInner />
-        </AuthProvider>
-      </BrandingProvider>
+      <ThemeProvider>
+        <BrandingProvider>
+          <AuthProvider>
+            <AppInner />
+          </AuthProvider>
+        </BrandingProvider>
+      </ThemeProvider>
     </BrowserRouter>
   )
 }

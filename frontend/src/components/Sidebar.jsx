@@ -4,9 +4,10 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard, Globe, Package, FolderOpen, Container,
   Database, Mail, Settings, ChevronLeft, ChevronRight,
-  LogOut, Server, Wifi, WifiOff, Activity
+  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
+import { useTheme } from '../contexts/ThemeContext'
 
 const navItems = [
   { path: '/overview', icon: LayoutDashboard, label: 'Overview' },
@@ -24,6 +25,7 @@ export default function Sidebar({ connected = true }) {
   const [collapsed, setCollapsed] = useState(false)
   const { user, signOut } = useAuth()
   const { branding } = useBranding()
+  const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   const handleSignOut = async () => {
@@ -157,18 +159,48 @@ export default function Sidebar({ connected = true }) {
         padding: collapsed ? '12px 8px' : '12px 16px',
         borderTop: '1px solid var(--color-border)',
       }}>
-        {!collapsed && (
-          <div style={{
-            fontSize: '0.75rem',
-            color: 'var(--color-text-muted)',
-            marginBottom: 8,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}>
-            {user?.email ?? 'Demo Mode'}
-          </div>
-        )}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'space-between',
+          marginBottom: 10,
+          gap: 8,
+        }}>
+          {!collapsed && (
+            <div style={{
+              fontSize: '0.75rem',
+              color: 'var(--color-text-muted)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              flex: 1
+            }}>
+              {user?.email ?? 'Demo Mode'}
+            </div>
+          )}
+          <button
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 28,
+              height: 28,
+              borderRadius: 8,
+              background: 'rgba(255, 255, 255, 0.03)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-muted)',
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              flexShrink: 0
+            }}
+            onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-primary)'; e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)' }}
+            onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)' }}
+          >
+            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          </button>
+        </div>
         <button
           onClick={handleSignOut}
           title="Sign out"
