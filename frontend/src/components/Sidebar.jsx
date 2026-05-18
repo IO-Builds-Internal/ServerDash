@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard, Globe, Package, FolderOpen, Container,
   Database, Mail, Settings, ChevronLeft, ChevronRight,
-  LogOut, Server, Wifi, WifiOff
+  LogOut, Server, Wifi, WifiOff, Activity
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
 
@@ -16,6 +16,7 @@ const navItems = [
   { path: '/docker', icon: Container, label: 'Docker Apps' },
   { path: '/supabase', icon: Database, label: 'Supabase Projects' },
   { path: '/smtp', icon: Mail, label: 'SMTP & Mail' },
+  { path: '/ports', icon: Activity, label: 'Ports Monitor' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ]
 

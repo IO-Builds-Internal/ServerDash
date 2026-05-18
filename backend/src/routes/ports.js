@@ -3,46 +3,129 @@ const router = express.Router()
 const { exec } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
+const fs = require('fs')
+const path = require('path')
 const logger = require('../logger')
 
 // ── GET /api/ports ─────────────────────────────────────────────────────────────
-// Returns all used ports + a helper to check availability
+// Returns all detailed open ports, protocols, and their corresponding running processes/commands
 router.get('/', async (req, res) => {
   try {
-    const { stdout } = await execAsync("ss -tlnp 2>/dev/null | grep LISTEN")
-    const ports = []
-    for (const line of stdout.split('\n').filter(Boolean)) {
-      const addrMatch = line.match(/[\s:](\d+)\s+/)
-      const processMatch = line.match(/users:\(\("([^"]+)",pid=(\d+)/)
-      if (addrMatch) {
-        const port = parseInt(addrMatch[1])
-        const addr = line.match(/\s+([^\s]+:\d+)\s+/)?.[1] || ''
-        const isPublic = addr.startsWith('0.0.0.0') || addr.startsWith('[::]')
+    // Query TCP and UDP sockets in listening state with process IDs
+    exec('ss -tlunp 2>/dev/null', (err, stdout) => {
+      if (err) {
+        return res.status(500).json({ error: `ss query failed: ${err.message}` })
+      }
+
+      const lines = stdout.split('\n').slice(1) // skip the header
+      const ports = []
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+
+        // Example line:
+        // tcp   LISTEN 0      4096         0.0.0.0:14001      0.0.0.0:*    users:(("docker-proxy",pid=165606,fd=8))
+        const tokens = line.trim().split(/\s+/)
+        if (tokens.length < 5) continue
+
+        const protocol = tokens[0] // tcp/udp
+        const state = tokens[1]    // LISTEN/UNCONN
+        const localAddr = tokens[4] // 0.0.0.0:14001 or [::]:14001
+
+        let ip = ''
+        let port = ''
+
+        if (localAddr.includes(']:')) {
+          const parts = localAddr.split(']:')
+          ip = parts[0].replace('[', '')
+          port = parts[1]
+        } else if (localAddr.includes(':')) {
+          const lastColon = localAddr.lastIndexOf(':')
+          ip = localAddr.substring(0, lastColon)
+          port = localAddr.substring(lastColon + 1)
+        } else {
+          ip = localAddr
+          port = ''
+        }
+
+        if (!port) continue
+
+        let processName = ''
+        let pid = null
+
+        // Parse users string e.g. users:(("node",pid=788842,fd=21))
+        const usersMatch = line.match(/users:\(([^)]+)\)/)
+        if (usersMatch) {
+          const content = usersMatch[1]
+          const nameMatch = content.match(/"([^"]+)"/)
+          const pidMatch = content.match(/pid=(\d+)/)
+
+          if (nameMatch) processName = nameMatch[1]
+          if (pidMatch) pid = parseInt(pidMatch[1], 10)
+        }
+
         ports.push({
-          port,
-          process: processMatch ? processMatch[1] : 'unknown',
-          pid: processMatch ? parseInt(processMatch[2]) : null,
-          address: addr,
-          public: isPublic,
+          protocol,
+          state,
+          address: localAddr,
+          ip,
+          port: parseInt(port, 10),
+          process: processName || 'unknown',
+          pid: pid || null,
+          command: '' // resolved next
         })
       }
-    }
-    // Deduplicate
-    const seen = new Set()
-    const unique = ports.filter(p => {
-      if (seen.has(p.port)) return false
-      seen.add(p.port)
-      return true
-    }).sort((a, b) => a.port - b.port)
 
-    res.json(unique)
+      // Read cmdlines for PIDs
+      const promises = ports.map(item => {
+        if (!item.pid) return Promise.resolve(item)
+        return new Promise(resolve => {
+          fs.readFile(`/proc/${item.pid}/cmdline`, 'utf8', (err, data) => {
+            if (!err && data) {
+              item.command = data.split('\0').filter(Boolean).join(' ').trim()
+            }
+            if (!item.command) {
+              fs.readFile(`/proc/${item.pid}/comm`, 'utf8', (err2, data2) => {
+                if (!err2 && data2) {
+                  item.command = data2.trim()
+                }
+                resolve(item)
+              })
+            } else {
+              resolve(item)
+            }
+          })
+        })
+      })
+
+      Promise.all(promises).then(results => {
+        // Sort ports ascending
+        results.sort((a, b) => a.port - b.port)
+        res.json(results)
+      })
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
+// ── DELETE /api/ports/kill/:pid ─────────────────────────────────────────────────
+// Force terminate the running process on a given port to release it
+router.delete('/kill/:pid', async (req, res) => {
+  const pid = parseInt(req.params.pid)
+  if (!pid) return res.status(400).json({ error: 'PID required' })
+
+  try {
+    logger.info(`Killing process with PID ${pid} to free up port`)
+    // Run kill -9 to force kill
+    await execAsync(`kill -9 ${pid}`)
+    res.json({ success: true, message: `Process ${pid} force terminated` })
+  } catch (err) {
+    res.status(500).json({ error: `Failed to terminate process: ${err.message}` })
+  }
+})
+
 // ── GET /api/ports/available?start=3000&count=5 ───────────────────────────────
-// Find N consecutive available ports starting from a given port
 router.get('/available', async (req, res) => {
   const start = parseInt(req.query.start || '3000')
   const count = parseInt(req.query.count || '1')
