@@ -1,0 +1,50 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Build and distribution outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+bin/
+obj/
+
+# Environment files and secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+*.pem
+*.key
+
+# Log files and runtimes
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+nohup.out
+combined.log
+
+# Temporary and IDE files
+.DS_Store
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+tmp/
+temp/
+/tmp/
+
+# Server-specific data
+backend/data/
+backend/logs/
+/backend/data/settings.json

@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_URL=http://localhost:3001
+      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
+      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - VPS_HOST=${VPS_HOST}
+      - VPS_USER=${VPS_USER}
+      - VPS_KEY_PATH=/run/secrets/ssh_key
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:5173}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - backend_logs:/app/logs
+    secrets:
+      - ssh_key
+    restart: unless-stopped
+
+secrets:
+  ssh_key:
+    file: ${VPS_KEY_PATH:-~/.ssh/id_rsa}
+
+volumes:
+  backend_logs:
