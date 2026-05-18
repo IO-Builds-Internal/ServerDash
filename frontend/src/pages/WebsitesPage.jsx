@@ -687,7 +687,7 @@ export default function WebsitesPage() {
                   <Download size={13} />
                 </button>
                 <a 
-                  href={`${site.ssl ? 'https' : 'http'}://${site.domain}`} 
+                  href={site.isSystemPanel ? '/' : `${site.ssl ? 'https' : 'http'}://${site.domain}`} 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="btn btn-secondary btn-icon btn-sm"

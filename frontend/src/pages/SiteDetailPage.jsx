@@ -576,7 +576,7 @@ export default function SiteDetailPage() {
         </div>
 
         <div style={{ display:'flex', gap:10 }}>
-          <a href={`${site.ssl ? 'https' : 'http'}://${site.domain}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
+          <a href={site.isSystemPanel ? '/' : `${site.ssl ? 'https' : 'http'}://${site.domain}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
             <ExternalLink size={15}/> Visit Live Website
           </a>
           {site.isSystemPanel ? (

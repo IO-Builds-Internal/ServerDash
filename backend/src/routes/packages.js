@@ -324,17 +324,56 @@ router.get('/serverdash-update/status', async (req, res) => {
 
     const currentHash = localHead.trim()
     const latestHash = remoteHead.trim()
-    const updateAvailable = currentHash !== latestHash
+    const gitUpdateAvailable = currentHash !== latestHash
 
     const { stdout: repoUrl } = await execAsync('git remote get-url origin', { cwd: '/root/ServerDash' })
+
+    let localVersion = '1.0.0'
+    let latestReleaseTag = 'v1.0.0'
+    let latestReleaseName = 'Initial Release'
+    let latestReleaseBody = ''
+    let releaseUpdateAvailable = false
+
+    try {
+      const localPkg = JSON.parse(fs.readFileSync('/root/ServerDash/backend/package.json', 'utf8'))
+      localVersion = localPkg.version || '1.0.0'
+    } catch {}
+
+    try {
+      const axios = require('axios')
+      const ghRes = await axios.get('https://api.github.com/repos/iobuilds/ServerDash/releases/latest', {
+        headers: { 'User-Agent': 'ServerDash-Updater' },
+        timeout: 4000
+      })
+      if (ghRes.data && ghRes.data.tag_name) {
+        latestReleaseTag = ghRes.data.tag_name
+        latestReleaseName = ghRes.data.name || ghRes.data.tag_name
+        latestReleaseBody = ghRes.data.body || ''
+        
+        const cleanLocal = localVersion.replace('v', '').trim()
+        const cleanRemote = latestReleaseTag.replace('v', '').trim()
+        
+        if (cleanLocal !== cleanRemote) {
+          releaseUpdateAvailable = true
+        }
+      }
+    } catch (e) {
+      // Graceful fallback if no GitHub releases exist yet / request rate-limited
+    }
 
     res.json({
       currentCommit: currentHash.substring(0, 7),
       currentMsg: localMsg.trim().substring(8),
       latestCommit: latestHash.substring(0, 7),
       latestMsg: remoteMsg.substring(8),
-      updateAvailable,
-      repoUrl: repoUrl.trim()
+      updateAvailable: gitUpdateAvailable || releaseUpdateAvailable,
+      gitUpdateAvailable,
+      repoUrl: repoUrl.trim(),
+      localVersion,
+      latestReleaseTag,
+      latestReleaseName,
+      latestReleaseBody,
+      releaseUpdateAvailable
     })
   } catch (err) {
     res.status(500).json({ error: err.message })

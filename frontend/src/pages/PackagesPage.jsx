@@ -683,27 +683,52 @@ export default function PackagesPage() {
                       <span style={{ color: 'var(--color-text-muted)' }}>Git Remote Upstream:</span>
                       <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{updateStatus.repoUrl}</span>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
-                      <span style={{ color: 'var(--color-text-muted)' }}>Current Local Commit:</span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--color-primary)', marginBottom: 8, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>GitHub Stable Releases (iobuilds)</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>Local Version:</span>
                         <code style={{ background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
-                          {updateStatus.currentCommit}
+                          v{updateStatus.localVersion}
                         </code>
-                        <span style={{ color: 'var(--color-text-dim)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.currentMsg}>
-                          ({updateStatus.currentMsg})
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>Latest Upstream Release:</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <code style={{ background: updateStatus.releaseUpdateAvailable ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', color: updateStatus.releaseUpdateAvailable ? '#f59e0b' : '#10b981', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                            {updateStatus.latestReleaseTag}
+                          </code>
+                          <span style={{ color: 'var(--color-text-dim)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.latestReleaseName}>
+                            ({updateStatus.latestReleaseName})
+                          </span>
                         </span>
-                      </span>
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
-                      <span style={{ color: 'var(--color-text-muted)' }}>Latest Git Release:</span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <code style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--color-primary)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
-                          {updateStatus.latestCommit}
-                        </code>
-                        <span style={{ color: 'var(--color-text-dim)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.latestMsg}>
-                          ({updateStatus.latestMsg})
+
+                    <div style={{ borderTop: '1px solid rgba(255,255,255,0.02)', paddingTop: 10 }}>
+                      <div style={{ fontWeight: 700, color: 'var(--color-primary)', marginBottom: 8, fontSize: '0.78rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Developer Commit Logs</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>Current Local Commit:</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <code style={{ background: 'rgba(255,255,255,0.04)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)' }}>
+                            {updateStatus.currentCommit}
+                          </code>
+                          <span style={{ color: 'var(--color-text-dim)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.currentMsg}>
+                            ({updateStatus.currentMsg})
+                          </span>
                         </span>
-                      </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+                        <span style={{ color: 'var(--color-text-muted)' }}>Latest Remote Commit:</span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <code style={{ background: 'rgba(99,102,241,0.1)', color: 'var(--color-primary)', padding: '2px 6px', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+                            {updateStatus.latestCommit}
+                          </code>
+                          <span style={{ color: 'var(--color-text-dim)', maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={updateStatus.latestMsg}>
+                            ({updateStatus.latestMsg})
+                          </span>
+                        </span>
+                      </div>
                     </div>
                   </div>
 
