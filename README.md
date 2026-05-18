@@ -1,5 +1,7 @@
 # ServerDash 🚀
 
+![ServerDash Banner](./assets/dashboard_banner.png)
+
 <div align="center">
 
 ![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)
@@ -48,6 +50,20 @@
               │  (Ubuntu) │ │ (same host)    │
               └───────────┘ └────────────────┘
 ```
+
+---
+
+## 🖥️ Visual Interface Preview
+
+ServerDash features a stunning, state-of-the-art glassmorphic dark-mode user interface designed to maximize accessibility and administrative clarity:
+
+### 🛡️ Dashboard Gateway & Authentication
+A secure, responsive login gateway protecting all administrative API interfaces.
+![ServerDash Login Gateway](./assets/dashboard_login.png)
+
+### 📊 Real-Time Server Observability Overview
+A clean, premium workspace rendering CPU, Memory, Disk, and Network telemetry alongside process tracking and dynamic metrics.
+![ServerDash System Overview](./assets/dashboard_overview.png)
 
 ---
 
