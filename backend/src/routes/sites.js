@@ -1026,6 +1026,64 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
       } catch (e) { send(`⚠ PM2: ${e.message}`) }
     }
 
+    // --- Python / Flask: virtualenv, pip packages, PM2 daemon running ────────────────────────
+    if (type === 'python' || type === 'flask') {
+      send('▶ Preparing Python and virtual environment dependencies...')
+      await tryExec('apt-get update 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip gunicorn 2>&1', send, 'python packages', { timeout: 180000, tail: 14 })
+
+      const venvPath = path.join(sitePath, 'venv')
+      if (!fs.existsSync(venvPath)) {
+        send('Creating isolated python3 virtualenv...')
+        await tryExec(`python3 -m venv "${venvPath}" 2>&1`, send, 'venv create', { timeout: 60000 })
+      }
+
+      const pipBin = path.join(venvPath, 'bin', 'pip')
+      const reqPath = path.join(sitePath, 'requirements.txt')
+
+      if (fs.existsSync(reqPath)) {
+        send('requirements.txt detected! Installing python packages into venv...')
+        await tryExec(`"${pipBin}" install -r "${reqPath}" 2>&1`, send, 'pip install', { timeout: 180000, tail: 12 })
+      } else {
+        send('No requirements.txt found. Installing Flask and Gunicorn by default...')
+        await tryExec(`"${pipBin}" install flask gunicorn 2>&1`, send, 'pip default install', { timeout: 90000 })
+      }
+
+      // Check/create app entrypoint boilerplate
+      const appFile = path.join(sitePath, 'app.py')
+      const mainFile = path.join(sitePath, 'main.py')
+      const wsgiFile = path.join(sitePath, 'wsgi.py')
+
+      let entryModule = 'app'
+      if (fs.existsSync(wsgiFile)) entryModule = 'wsgi'
+      else if (fs.existsSync(mainFile)) entryModule = 'main'
+      else if (!fs.existsSync(appFile)) {
+        send('Creating boilerplate Flask app.py...')
+        fs.writeFileSync(appFile, `from flask import Flask, jsonify
+app = Flask(__name__)
+
+@app.route('/')
+def hello():
+    return jsonify(status="ok", message="Hello from Flask deployed on ServerDash!")
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=${port})
+`, 'utf8')
+      }
+
+      try {
+        await execAsync(`pm2 delete ${shellQuote(domain)} 2>/dev/null || true`)
+        const gunicornPath = path.join(venvPath, 'bin', 'gunicorn')
+        const startCommand = `"${gunicornPath}" --bind 127.0.0.1:${port} ${entryModule}:app`
+        
+        send(`PM2 launching Flask Gunicorn application: ${startCommand}…`)
+        await execAsync(`pm2 start bash --name ${shellQuote(domain)} -- -lc ${shellQuote(`cd ${shellQuote(sitePath)} && ${startCommand}`)} 2>&1`, { timeout: 60000 })
+        await execAsync('pm2 save 2>/dev/null || true')
+        send(`✓ PM2 started: ${domain} (Flask) on port ${port}`)
+      } catch (e) {
+        send(`⚠ PM2: ${e.message}`)
+      }
+    }
+
     // --- PHP / WordPress ────────────────────────────────────────────────────
     if (type === 'php') {
       await ensurePhpRuntime(phpVersion, send)
@@ -1073,7 +1131,7 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
           ? requestedNodeOutput
           : sitePath
     let nginxConf
-    if (type==='proxy' || type==='node') {
+    if (type==='proxy' || type==='node' || type==='python' || type==='flask') {
       nginxConf = `server {
     listen 80;
     server_name ${domain};

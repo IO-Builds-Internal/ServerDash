@@ -61,6 +61,14 @@ export default function PortsPage() {
   const [error, setError] = useState('')
   const [busyPid, setBusyPid] = useState(null)
   const [successMsg, setSuccessMsg] = useState('')
+  const [expandedPids, setExpandedPids] = useState(new Set())
+
+  const toggleExpand = (pid) => {
+    const next = new Set(expandedPids)
+    if (next.has(pid)) next.delete(pid)
+    else next.add(pid)
+    setExpandedPids(next)
+  }
 
   const fetchPorts = async () => {
     setLoading(true)
@@ -345,11 +353,42 @@ export default function PortsPage() {
                     {/* Launch command */}
                     <td style={{ padding: '14px 18px' }}>
                       {p.command ? (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#070708', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)', maxWidth: 460 }}>
-                          <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }} title={p.command}>
-                            {p.command}
-                          </code>
-                          <CopyButton text={p.command} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 500 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#070708', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+                            <code style={{
+                              fontFamily: 'var(--font-mono)',
+                              fontSize: '0.72rem',
+                              color: 'var(--color-text-dim)',
+                              whiteSpace: expandedPids.has(p.pid) ? 'pre-wrap' : 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              wordBreak: 'break-all',
+                              flex: 1
+                            }}>
+                              {expandedPids.has(p.pid) || p.command.length <= 40 ? p.command : `${p.command.substring(0, 40)}...`}
+                            </code>
+                            <CopyButton text={p.command} />
+                          </div>
+                          {p.command.length > 40 && (
+                            <button
+                              onClick={() => toggleExpand(p.pid)}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                color: 'var(--color-primary)',
+                                fontSize: '0.7rem',
+                                fontWeight: 700,
+                                cursor: 'pointer',
+                                padding: 0,
+                                textAlign: 'left',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4
+                              }}
+                            >
+                              {expandedPids.has(p.pid) ? 'Collapse Command' : 'Expand Full Command'}
+                            </button>
+                          )}
                         </div>
                       ) : (
                         <span style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>

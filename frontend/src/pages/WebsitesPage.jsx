@@ -111,6 +111,9 @@ function Wizard({ onClose, onCreated }) {
     if (type === 'node') {
       setEnvText(v => v || `NODE_ENV=production\nPORT=${port}`)
     }
+    if (type === 'python' || type === 'flask') {
+      setEnvText(v => v || `FLASK_ENV=production\nPORT=${port}`)
+    }
     if (type === 'php') {
       setEnvText('')
       setWpTitle(t => t || domain || 'WordPress Site')
@@ -197,6 +200,7 @@ function Wizard({ onClose, onCreated }) {
   const TYPES = [
     { id:'static', Icon: Globe, title:'Static / SPA', desc:'React, Vue, plain HTML', hint:'Build output or ready-to-serve files' },
     { id:'node',   Icon: Server, title:'Node.js', desc:'Express, Next.js, PM2', hint:'Vercel-style install/build/start controls' },
+    { id:'python', Icon: Terminal, title:'Flask / Python', desc:'Flask, Gunicorn, PM2', hint:'Automated virtualenv and package dependencies' },
     { id:'php',    Icon: Boxes, title:'PHP / WordPress', desc:'PHP-FPM, Laravel, WordPress', hint:'PHP version, WordPress bootstrap, CDN cache rules' },
     { id:'proxy',  Icon: Cpu, title:'Reverse Proxy', desc:'Proxy to existing service', hint:'Forward domain traffic to a local port' },
   ]
@@ -339,7 +343,7 @@ function Wizard({ onClose, onCreated }) {
           {/* Step 2: Config */}
           {step===2 && (
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
-              {(type==='node'||type==='proxy') && (
+              {(type==='node'||type==='proxy'||type==='python'||type==='flask') && (
                 <div>
                   <label className="label" style={{ display:'flex', justifyContent:'space-between' }}>
                     App Port
@@ -464,8 +468,8 @@ function Wizard({ onClose, onCreated }) {
 }
 
 // ── Main WebsitesPage ─────────────────────────────────────────────────────────
-const TYPE_COLORS = { static: '#3b82f6', proxy: '#8b5cf6', node: '#10b981', php: '#f59e0b', 'no-nginx': '#6b7280' }
-const TYPE_LABELS = { static: 'Static / SPA', node: 'Node.js App', php: 'PHP / WP', proxy: 'Reverse Proxy', 'no-nginx': 'No Nginx' }
+const TYPE_COLORS = { static: '#3b82f6', proxy: '#8b5cf6', node: '#10b981', php: '#f59e0b', python: '#3776ab', flask: '#3776ab', 'no-nginx': '#6b7280' }
+const TYPE_LABELS = { static: 'Static / SPA', node: 'Node.js App', php: 'PHP / WP', python: 'Flask / Python', flask: 'Flask / Python', proxy: 'Reverse Proxy', 'no-nginx': 'No Nginx' }
 
 export default function WebsitesPage() {
   const navigate = useNavigate()
