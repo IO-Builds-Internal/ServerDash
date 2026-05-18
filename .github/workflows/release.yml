@@ -1,0 +1,35 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ServerDash ${{ github.ref_name }} 🚀
+          body: |
+            ## ServerDash ${{ github.ref_name }} 🚀
+            
+            We are excited to announce the release of **ServerDash ${{ github.ref_name }}**!
+            
+            ### ✨ What's New:
+            - **🔄 Git Autolinking & Self-Upgrader**: Fully automated web-based panel self-upgrades and SSE streaming log outputs.
+            - **📍 Local Geolocation Map Engine**: Offline country flag lookups taking under 0.2ms per visitor connection.
+            - **🔒 Dashboard Security Shield**: View-only administrative locks and 403 deletion blockades on default sites.
+            - **💻 Administrative Shell Console**: Quick shell command presets and execution log consoles.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
