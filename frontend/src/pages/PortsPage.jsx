@@ -33,7 +33,7 @@ function CopyButton({ text }) {
     <button
       onClick={copy}
       style={{
-        background: 'rgba(255,255,255,0.05)',
+        background: 'var(--color-surface-3)',
         border: '1px solid var(--color-border)',
         borderRadius: 4,
         width: 24,
@@ -354,7 +354,7 @@ export default function PortsPage() {
                     <td style={{ padding: '14px 18px' }}>
                       {p.command ? (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxWidth: 500 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: '#070708', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'var(--color-surface-2)', padding: '6px 10px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
                             <code style={{
                               fontFamily: 'var(--font-mono)',
                               fontSize: '0.72rem',

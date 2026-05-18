@@ -780,14 +780,14 @@ export default function ProjectDetailPage() {
                 <pre style={{
                   margin: 0,
                   padding: 20,
-                  background: '#070708',
+                  background: 'var(--color-surface-2)',
                   border: '1px solid var(--color-border)',
                   borderRadius: 10,
                   fontSize: '0.78rem',
                   fontFamily: 'var(--font-mono)',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
-                  color: '#e4e4e7',
+                  color: 'var(--color-text-dim)',
                   lineHeight: 1.7,
                   maxHeight: 500,
                   overflowY: 'auto'
@@ -826,7 +826,7 @@ export default function ProjectDetailPage() {
               <pre style={{
                 margin: 0,
                 padding: 20,
-                background: '#070708',
+                background: 'var(--color-surface-2)',
                 border: '1px solid var(--color-border)',
                 borderRadius: 10,
                 fontSize: '0.78rem',
@@ -971,7 +971,7 @@ export default function ProjectDetailPage() {
                           </div>
 
                           {/* Endpoint link with Copy */}
-                          <div style={{ flex: 1, minWidth: 280, display: 'flex', alignItems: 'center', gap: 8, background: '#070708', padding: '6px 12px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
+                          <div style={{ flex: 1, minWidth: 280, display: 'flex', alignItems: 'center', gap: 8, background: 'var(--color-surface-2)', padding: '6px 12px', borderRadius: 6, border: '1px solid var(--color-border)' }}>
                             <span style={{ fontSize: '0.68rem', color: '#10b981', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em' }}>POST</span>
                             <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.74rem', color: 'var(--color-text-dim)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                               {endpointUrl}
@@ -1003,7 +1003,7 @@ export default function ProjectDetailPage() {
                   <pre style={{
                     margin: 0,
                     padding: '14px 18px',
-                    background: '#070708',
+                    background: 'var(--color-surface-2)',
                     border: '1px solid var(--color-border)',
                     borderRadius: 8,
                     fontFamily: 'var(--font-mono)',
