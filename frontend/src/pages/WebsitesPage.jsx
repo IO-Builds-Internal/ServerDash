@@ -96,6 +96,7 @@ function Wizard({ onClose, onCreated }) {
   const [mailboxes, setMailboxes] = useState('')
   const [zipFile, setZipFile] = useState(null)
   const [ssl, setSsl] = useState(false)
+  const [customPath, setCustomPath] = useState('')
   const [lines, setLines] = useState([])
   const [deploying, setDeploying] = useState(false)
   const [done, setDone] = useState(false)
@@ -169,6 +170,7 @@ function Wizard({ onClose, onCreated }) {
       body.append('wpAdminPass', wpAdminPass)
       body.append('wpAdminEmail', wpAdminEmail)
       body.append('mailboxes', configureMailboxes ? mailboxes : '')
+      body.append('customPath', customPath)
       if (source==='zip' && zipFile) body.append('zip', zipFile)
 
       const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/sites/create-wizard`, {
@@ -343,6 +345,21 @@ function Wizard({ onClose, onCreated }) {
           {/* Step 2: Config */}
           {step===2 && (
             <div style={{ display:'flex', flexDirection:'column', gap:14 }}>
+              {type !== 'proxy' && (
+                <div>
+                  <label className="label">Deployment Path / Root Directory</label>
+                  <input
+                    className="input"
+                    value={customPath}
+                    onChange={e=>setCustomPath(e.target.value)}
+                    placeholder={`/var/www/${domain || 'mysite.com'}`}
+                  />
+                  <p style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', marginTop:4 }}>
+                    Leave empty to use the default path: <code>/var/www/{domain || 'mysite.com'}</code>
+                  </p>
+                </div>
+              )}
+
               {(type==='node'||type==='proxy'||type==='python'||type==='flask') && (
                 <div>
                   <label className="label" style={{ display:'flex', justifyContent:'space-between' }}>
@@ -357,7 +374,7 @@ function Wizard({ onClose, onCreated }) {
               <div>
                 <label className="label">.env Variables (paste your .env file content)</label>
                 <textarea value={envText} onChange={e=>setEnvText(e.target.value)} placeholder={'NODE_ENV=production\nPORT=3000\nDATABASE_URL=...\n# Add your environment variables here'} style={{ width:'100%', height:160, background:'#0a0e17', color:'#e2e8f0', border:'1px solid var(--color-border)', borderRadius:8, padding:'10px 14px', fontFamily:'var(--font-mono)', fontSize:'0.8125rem', lineHeight:1.6, outline:'none', resize:'vertical', boxSizing:'border-box' }}/>
-                <p style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', marginTop:4 }}>These will be saved to /var/www/{domain||'yoursite'}/.env</p>
+                <p style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', marginTop:4 }}>These will be saved to {customPath.trim() || `/var/www/${domain || 'yoursite'}`}/.env</p>
               </div>
 
               {type==='node' && (

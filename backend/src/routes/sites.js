@@ -942,11 +942,12 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
     wpAdminPass='',
     wpAdminEmail='',
     mailboxes='',
+    customPath='',
   } = req.body
   const domain = cleanDomain(req.body.domain)
   if (!domain) { send('✗ valid domain required'); return res.end() }
 
-  const sitePath = `/var/www/${domain}`
+  const sitePath = customPath && customPath.trim() ? path.resolve(customPath.trim()) : `/var/www/${domain}`
 
   try {
     send(`▶ Creating site: ${domain} (${type})`)
