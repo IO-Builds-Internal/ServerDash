@@ -48,3 +48,7 @@ temp/
 backend/data/
 backend/logs/
 /backend/data/settings.json
+
+# Project Status Reports
+PROJECT_STATUS.md
+/PROJECT_STATUS.md
