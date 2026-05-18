@@ -52,3 +52,7 @@ backend/logs/
 # Project Status Reports
 PROJECT_STATUS.md
 /PROJECT_STATUS.md
+
+# Scratchpad/temp directories
+scratch/
+/scratch/

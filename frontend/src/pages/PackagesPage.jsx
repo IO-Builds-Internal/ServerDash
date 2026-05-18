@@ -28,17 +28,17 @@ function TermOutput({ lines, height = 300, running, onClear, onStop }) {
           </button>
         </div>
       </div>
-      
-      <div 
-        ref={ref} 
-        className="terminal" 
-        style={{ 
-          height, 
-          overflowY: 'auto', 
-          fontSize: '0.8rem', 
-          lineHeight: 1.6, 
-          borderRadius: 0, 
-          border: 'none', 
+
+      <div
+        ref={ref}
+        className="terminal"
+        style={{
+          height,
+          overflowY: 'auto',
+          fontSize: '0.8rem',
+          lineHeight: 1.6,
+          borderRadius: 0,
+          border: 'none',
           background: '#010409',
           padding: 16
         }}
@@ -49,9 +49,9 @@ function TermOutput({ lines, height = 300, running, onClear, onStop }) {
           </div>
         ) : (
           lines.map((l, i) => (
-            <div 
-              key={i} 
-              style={{ 
+            <div
+              key={i}
+              style={{
                 color: l.startsWith('✓') || l.startsWith('Congratulations!') ? '#34d399' : l.startsWith('✗') || l.startsWith('Failed') || l.startsWith('Error') ? '#f87171' : l.startsWith('$') ? '#818cf8' : undefined,
                 fontFamily: 'var(--font-mono)',
                 marginTop: 2
@@ -81,16 +81,16 @@ function useSSEStream() {
     // FIXING THE CRITICAL AUTHENTICATION BUG: 
     // Fetching the correct JWT token from localAuth utility
     const token = localAuth.getToken() || ''
-    
-    const opts = { 
-      headers: { Authorization: `Bearer ${token}` }, 
-      signal: ctrl.signal 
+
+    const opts = {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ctrl.signal
     }
-    
-    if (method === 'POST') { 
+
+    if (method === 'POST') {
       opts.method = 'POST'
       opts.headers['Content-Type'] = 'application/json'
-      if (body) opts.body = JSON.stringify(body) 
+      if (body) opts.body = JSON.stringify(body)
     }
 
     try {
@@ -98,17 +98,17 @@ function useSSEStream() {
       const reader = resp.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
-      
+
       while (ctrlRef.current && !ctrlRef.current.signal.aborted) {
         const { done, value } = await reader.read()
         if (done) break
         buf += dec.decode(value, { stream: true })
         const parts = buf.split('\n')
         buf = parts.pop()
-        
-        parts.forEach(line => { 
+
+        parts.forEach(line => {
           if (line.startsWith('data: ')) {
-            setLines(l => [...l, line.slice(6)]) 
+            setLines(l => [...l, line.slice(6)])
           } else if (line.trim()) {
             setLines(l => [...l, line])
           }
@@ -123,12 +123,12 @@ function useSSEStream() {
     }
   }, [])
 
-  const stop = () => { 
+  const stop = () => {
     ctrlRef.current?.abort()
     setLines(l => [...l, '✗ Command aborted by user'])
-    setRunning(false) 
+    setRunning(false)
   }
-  
+
   const clear = () => {
     setLines([])
   }
@@ -138,7 +138,7 @@ function useSSEStream() {
 
 export default function PackagesPage() {
   // Tabs: 'install' | 'installed' | 'zip' | 'exec'
-  const [tab, setTab] = useState('install') 
+  const [tab, setTab] = useState('install')
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [searching, setSearching] = useState(false)
@@ -173,17 +173,17 @@ export default function PackagesPage() {
 
   const loadInstalled = async () => {
     setLoadingInstalled(true)
-    try { 
+    try {
       const r = await api.get('/api/packages/list')
-      setInstalled(r.data) 
+      setInstalled(r.data)
     } catch (e) {
       console.error(e)
     }
     setLoadingInstalled(false)
   }
 
-  useEffect(() => { 
-    if (tab === 'installed') loadInstalled() 
+  useEffect(() => {
+    if (tab === 'installed') loadInstalled()
   }, [tab])
 
   const install = (pkg) => {
@@ -244,7 +244,7 @@ export default function PackagesPage() {
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {/* Header section */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom:'1px solid var(--color-border)', paddingBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)', paddingBottom: 16 }}>
         <div>
           <h2 style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, letterSpacing: '-0.03em' }}>System Package Manager</h2>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>
@@ -277,15 +277,15 @@ export default function PackagesPage() {
 
       {/* Dynamic Content */}
       <div style={{ minHeight: 400 }}>
-        
+
         {/* TAB 1: SEARCH & INSTALL */}
         {tab === 'install' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
             {/* Search Pane */}
-            <div className="glass-card" style={{ padding: 24, display:'flex', flexDirection:'column', gap:16, height:'fit-content' }}>
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16, height: 'fit-content' }}>
               <div>
-                <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Apt Package Finder</h3>
-                <p style={{ margin:'4px 0 0 0', fontSize:'0.82rem', color:'var(--color-text-muted)' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Apt Package Finder</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
                   Search the Ubuntu package archive to install software directly.
                 </p>
               </div>
@@ -303,19 +303,19 @@ export default function PackagesPage() {
               </div>
 
               {searching && (
-                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: 24, display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
-                  <RefreshCw size={14} className="animate-spin"/> Pulling details from apt-cache...
+                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <RefreshCw size={14} className="animate-spin" /> Pulling details from apt-cache...
                 </div>
               )}
 
               {searchResults.length > 0 && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 400, overflowY: 'auto', paddingRight: 4 }}>
                   {searchResults.map(pkg => (
-                    <div key={pkg.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border:'1px solid var(--color-border)', transition:'border-color 0.2s' }}>
+                    <div key={pkg.name} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', borderRadius: 10, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', transition: 'border-color 0.2s' }}>
                       <Package size={18} color="var(--color-primary)" style={{ flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>{pkg.name}</div>
-                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop:2 }}>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
                           {pkg.description || 'No description available'}
                         </div>
                       </div>
@@ -328,8 +328,8 @@ export default function PackagesPage() {
               )}
 
               {searchQuery.length >= 2 && !searching && searchResults.length === 0 && (
-                <div style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)', border:'1px dashed var(--color-border)', borderRadius:12 }}>
-                  <AlertTriangle size={24} style={{ display:'block', margin:'0 auto 10px', color:'var(--color-warning)' }}/>
+                <div style={{ textAlign: 'center', padding: 32, color: 'var(--color-text-muted)', border: '1px dashed var(--color-border)', borderRadius: 12 }}>
+                  <AlertTriangle size={24} style={{ display: 'block', margin: '0 auto 10px', color: 'var(--color-warning)' }} />
                   No packages registered under "{searchQuery}"
                 </div>
               )}
@@ -345,23 +345,23 @@ export default function PackagesPage() {
         {/* TAB 2: INSTALLED PACKAGES */}
         {tab === 'installed' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <div className="glass-card" style={{ padding: 20, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+            <div className="glass-card" style={{ padding: 20, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Currently Installed Packages</h3>
-                <p style={{ margin:'4px 0 0 0', fontSize:'0.82rem', color:'var(--color-text-muted)' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Currently Installed Packages</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
                   A list of package binaries currently active on this virtual private server.
                 </p>
               </div>
-              
+
               <div style={{ display: 'flex', gap: 10 }}>
                 <div style={{ position: 'relative' }}>
                   <Search size={15} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />
-                  <input 
-                    className="input" 
-                    placeholder="Filter package list..." 
-                    value={pkgFilter} 
-                    onChange={e => setPkgFilter(e.target.value)} 
-                    style={{ paddingLeft: 34, height: 38, fontSize: '0.85rem', width: 220 }} 
+                  <input
+                    className="input"
+                    placeholder="Filter package list..."
+                    value={pkgFilter}
+                    onChange={e => setPkgFilter(e.target.value)}
+                    style={{ paddingLeft: 34, height: 38, fontSize: '0.85rem', width: 220 }}
                   />
                 </div>
                 <button className="btn btn-secondary" onClick={loadInstalled} disabled={loadingInstalled} title="Refresh Installed Packages">
@@ -385,7 +385,7 @@ export default function PackagesPage() {
                     {loadingInstalled ? (
                       <tr>
                         <td colSpan={4} style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-                          <RefreshCw size={20} className="animate-spin" style={{ display:'block', margin:'0 auto 10px' }}/>
+                          <RefreshCw size={20} className="animate-spin" style={{ display: 'block', margin: '0 auto 10px' }} />
                           Loading registered dpkg-query list...
                         </td>
                       </tr>
@@ -398,7 +398,7 @@ export default function PackagesPage() {
                     ) : (
                       filteredInstalled.map(pkg => (
                         <tr key={pkg.name}>
-                          <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: '0.88rem', color:'var(--color-text)' }}>{pkg.name}</td>
+                          <td style={{ padding: '12px 18px', fontWeight: 700, fontSize: '0.88rem', color: 'var(--color-text)' }}>{pkg.name}</td>
                           <td style={{ padding: '12px 18px', fontSize: '0.8rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{pkg.version}</td>
                           <td style={{ padding: '12px 18px', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{pkg.size}</td>
                           <td style={{ padding: '12px 18px', textAlign: 'right' }}>
@@ -422,20 +422,20 @@ export default function PackagesPage() {
 
         {/* TAB 3: INSTALL FROM LOCAL FILE */}
         {tab === 'zip' && (
-          <div style={{ display: 'grid', gridTemplateColumns:'1.2fr 1fr', gap: 20 }}>
-            <div className="glass-card" style={{ padding: 24, display:'flex', flexDirection:'column', gap:18 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
-                <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Deploy Local Package / Binary</h3>
-                <p style={{ margin:'4px 0 0 0', fontSize:'0.82rem', color:'var(--color-text-muted)' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Deploy Local Package / Binary</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
                   Upload a `.deb` package file, or drag-and-drop a compressed archive to install scripts.
                 </p>
               </div>
 
-              <div style={{ display:'flex', alignItems:'center', gap:10, background:'rgba(6,182,212,0.04)', padding:14, borderRadius:10, border:'1px solid rgba(6,182,212,0.15)' }}>
-                <ShieldAlert size={20} color="var(--color-info)" style={{ flexShrink:0 }}/>
-                <span style={{ fontSize:'0.8rem', color:'var(--color-text-dim)', lineHeight:1.4 }}>
-                  <strong>Supported format triggers:</strong><br/>
-                  • <code>.deb</code> packages will install via <code>dpkg -i</code>.<br/>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(6,182,212,0.04)', padding: 14, borderRadius: 10, border: '1px solid rgba(6,182,212,0.15)' }}>
+                <ShieldAlert size={20} color="var(--color-info)" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-dim)', lineHeight: 1.4 }}>
+                  <strong>Supported format triggers:</strong><br />
+                  • <code>.deb</code> packages will install via <code>dpkg -i</code>.<br />
                   • <code>.zip</code> / <code>.tar.gz</code> will extract directly into your specified destination directory.
                 </span>
               </div>
@@ -447,18 +447,18 @@ export default function PackagesPage() {
 
               <div
                 onClick={() => fileRef.current.click()}
-                style={{ 
-                  border: '2px dashed var(--color-border)', 
-                  borderRadius: 14, 
-                  padding: 40, 
-                  textAlign: 'center', 
-                  cursor: 'pointer', 
-                  background: 'rgba(255,255,255,0.01)', 
+                style={{
+                  border: '2px dashed var(--color-border)',
+                  borderRadius: 14,
+                  padding: 40,
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  background: 'rgba(255,255,255,0.01)',
                   transition: 'all 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
-                  display:'flex',
-                  flexDirection:'column',
-                  alignItems:'center',
-                  gap:10
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: 10
                 }}
                 onMouseEnter={e => {
                   e.currentTarget.style.borderColor = 'var(--color-primary)'
@@ -471,15 +471,15 @@ export default function PackagesPage() {
               >
                 <Upload size={36} color="var(--color-text-muted)" />
                 <div>
-                  <p style={{ margin: 0, fontWeight: 700, fontSize:'0.95rem' }}>Click or drag a file to upload</p>
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: '0.95rem' }}>Click or drag a file to upload</p>
                   <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Compatible extensions: .deb · .zip · .tar.gz</p>
                 </div>
                 <input ref={fileRef} type="file" accept=".deb,.zip,.tar.gz,.tgz" style={{ display: 'none' }} onChange={uploadZip} disabled={uploading} />
               </div>
 
               {uploading && (
-                <div style={{ textAlign: 'center', color: 'var(--color-warning)', display:'flex', alignItems:'center', justifyContent:'center', gap:8, fontSize:'0.85rem', fontWeight:600 }}>
-                  <RefreshCw size={14} className="animate-spin"/> Streaming and deploying file...
+                <div style={{ textAlign: 'center', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, fontSize: '0.85rem', fontWeight: 600 }}>
+                  <RefreshCw size={14} className="animate-spin" /> Streaming and deploying file...
                 </div>
               )}
             </div>
@@ -492,12 +492,12 @@ export default function PackagesPage() {
 
         {/* TAB 4: RUN ADMINISTRATIVE COMMANDS */}
         {tab === 'exec' && (
-          <div style={{ display: 'grid', gridTemplateColumns:'1fr 1fr', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
             {/* Presets and Custom Commands */}
-            <div className="glass-card" style={{ padding: 24, display:'flex', flexDirection:'column', gap:18 }}>
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
-                <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Administrative Shell Console</h3>
-                <p style={{ margin:'4px 0 0 0', fontSize:'0.82rem', color:'var(--color-text-muted)' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Administrative Shell Console</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
                   Execute administrative commands securely inside the VPS sandbox container.
                 </p>
               </div>
@@ -509,7 +509,7 @@ export default function PackagesPage() {
                   onChange={e => setCommand(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && execStream()}
                   placeholder="e.g. systemctl status nginx  or  npm -g install ..."
-                  style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize:'0.9rem' }}
+                  style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '0.9rem' }}
                 />
                 <button className="btn btn-primary" onClick={execStream} disabled={running || !command.trim()}>
                   <PlayCircle size={15} /> Execute
@@ -518,19 +518,19 @@ export default function PackagesPage() {
 
               {/* Quick Presets Grid */}
               <div>
-                <h4 style={{ margin:'0 0 12px 0', fontSize:'0.8rem', textTransform:'uppercase', color:'var(--color-text-muted)', letterSpacing:'0.05em', fontWeight:700 }}>
+                <h4 style={{ margin: '0 0 12px 0', fontSize: '0.8rem', textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.05em', fontWeight: 700 }}>
                   Quick Preset Commands
                 </h4>
-                <div style={{ display: 'grid', gridTemplateColumns:'1fr 1fr', gap: 8 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {PRESET_COMMANDS.map(item => (
-                    <button 
-                      key={item.cmd} 
-                      onClick={() => { setCommand(item.cmd); }} 
-                      style={{ 
-                        padding: '10px 12px', 
-                        borderRadius: 8, 
-                        border: '1px solid var(--color-border)', 
-                        background: 'rgba(255,255,255,0.01)', 
+                    <button
+                      key={item.cmd}
+                      onClick={() => { setCommand(item.cmd); }}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--color-border)',
+                        background: 'rgba(255,255,255,0.01)',
                         textAlign: 'left',
                         cursor: 'pointer',
                         transition: 'all 0.2s'
@@ -564,49 +564,49 @@ export default function PackagesPage() {
         {/* TAB 5: INSTALL FROM GIT */}
         {tab === 'git' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
-            <div className="glass-card" style={{ padding: 24, display:'flex', flexDirection:'column', gap:18 }}>
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
-                <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Deploy Package from Git</h3>
-                <p style={{ margin:'4px 0 0 0', fontSize:'0.82rem', color:'var(--color-text-muted)' }}>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Deploy Package from Git</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
                   Clone any repository from GitHub, GitLab, or Bitbucket, and let ServerDash auto-compile and deploy it.
                 </p>
               </div>
 
-              <div style={{ display:'flex', alignItems:'center', gap:10, background:'rgba(99,102,241,0.04)', padding:14, borderRadius:10, border:'1px solid rgba(99,102,241,0.15)' }}>
-                <Cpu size={20} color="var(--color-primary)" style={{ flexShrink:0 }}/>
-                <span style={{ fontSize:'0.8rem', color:'var(--color-text-dim)', lineHeight:1.4 }}>
-                  <strong>Auto-Build Engine:</strong><br/>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'rgba(99,102,241,0.04)', padding: 14, borderRadius: 10, border: '1px solid rgba(99,102,241,0.15)' }}>
+                <Cpu size={20} color="var(--color-primary)" style={{ flexShrink: 0 }} />
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-dim)', lineHeight: 1.4 }}>
+                  <strong>Auto-Build Engine:</strong><br />
                   ServerDash automatically scans for <code>package.json</code> (npm installs), <code>requirements.txt</code> (python setups), and <code>Makefile</code> (executes make compilation) to set up your app packages dynamically!
                 </span>
               </div>
 
               <div>
                 <label className="label">Git Repository Clone URL</label>
-                <input 
-                  className="input" 
-                  value={gitRepoUrl} 
-                  onChange={e => setGitRepoUrl(e.target.value)} 
-                  placeholder="e.g. https://github.com/expressjs/express.git" 
+                <input
+                  className="input"
+                  value={gitRepoUrl}
+                  onChange={e => setGitRepoUrl(e.target.value)}
+                  placeholder="e.g. https://github.com/expressjs/express.git"
                 />
               </div>
 
               <div>
                 <label className="label">Clone Destination Path</label>
-                <input 
-                  className="input" 
-                  value={gitDest} 
-                  onChange={e => setGitDest(e.target.value)} 
-                  placeholder="/var/www" 
+                <input
+                  className="input"
+                  value={gitDest}
+                  onChange={e => setGitDest(e.target.value)}
+                  placeholder="/var/www"
                 />
               </div>
 
-              <button 
-                className="btn btn-primary" 
-                style={{ alignSelf:'flex-start', marginTop:10 }} 
-                onClick={installGitPackage} 
+              <button
+                className="btn btn-primary"
+                style={{ alignSelf: 'flex-start', marginTop: 10 }}
+                onClick={installGitPackage}
                 disabled={running || !gitRepoUrl.trim()}
               >
-                {running ? <RefreshCw size={14} className="animate-spin"/> : <Download size={14}/>}
+                {running ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
                 {running ? 'Cloning & Deploying...' : 'Clone & Auto-Build'}
               </button>
             </div>

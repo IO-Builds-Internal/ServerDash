@@ -10,24 +10,7 @@ import {
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
 
-// ── Portal overlay — renders into document.body to escape overflow:auto clipping ──
-function Overlay({ children, onClose }) {
-  return createPortal(
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.88)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '20px',
-        backdropFilter: 'blur(4px)',
-      }}
-      onClick={e => { if (e.target === e.currentTarget) onClose?.() }}
-    >
-      {children}
-    </div>,
-    document.body
-  )
-}
+import { Dialog, Overlay } from '../components/Dialog'
 
 function SupabaseWizard({ onClose, onCreated }) {
   const [step, setStep] = useState(1)
@@ -769,6 +752,14 @@ export default function SupabasePage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [actionTitle, setActionTitle] = useState('')
   const [actionMessage, setActionMessage] = useState('')
+  const [dialog, setDialog] = useState(null)
+
+  const showSuccess = (title, message) => {
+    setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
+  }
+  const showError = (title, message) => {
+    setDialog({ title, message, type: 'warning', onConfirm: () => setDialog(null) })
+  }
 
   const load = useCallback(async () => {
     const [pr, po] = await Promise.allSettled([
@@ -783,26 +774,64 @@ export default function SupabasePage() {
   useEffect(() => { load() }, [load])
 
   const doAction = async (id, action) => {
-    if (action === 'remove' && !confirm('Delete this Supabase project and all data? This cannot be undone.')) return
+    if (action === 'remove') {
+      setDialog({
+        title: 'Delete Supabase Project?',
+        message: 'Are you sure you want to delete this Supabase project and all its database containers? This cannot be undone.',
+        type: 'confirm',
+        onConfirm: async () => {
+          setDialog(null)
+          try {
+            await api.delete(`/api/supabase/${id}`)
+            load()
+          } catch (e) {
+            showError('Deletion Failed', e.response?.data?.error || e.message)
+          }
+        },
+        onCancel: () => setDialog(null)
+      })
+      return
+    }
+    
     try {
-      if (action === 'remove') await api.delete(`/api/supabase/${id}`)
-      else await api.post(`/api/supabase/${id}/${action}`)
+      await api.post(`/api/supabase/${id}/${action}`)
       load()
-    } catch (e) { alert(e.response?.data?.error || e.message) }
+    } catch (e) {
+      showError('Action Failed', e.response?.data?.error || e.message)
+    }
   }
 
   const doBulkAction = async (action) => {
     if (selectedProjects.size === 0) return
-    if (action === 'remove' && !confirm(`Delete ${selectedProjects.size} projects and all data? This cannot be undone.`)) return
-    try {
-      const promises = Array.from(selectedProjects).map(id => {
-        if (action === 'remove') return api.delete(`/api/supabase/${id}`)
-        return api.post(`/api/supabase/${id}/${action}`)
+    if (action === 'remove') {
+      setDialog({
+        title: `Delete ${selectedProjects.size} Supabase Projects?`,
+        message: `Are you sure you want to permanently delete these ${selectedProjects.size} projects and all associated databases? This cannot be undone.`,
+        type: 'confirm',
+        onConfirm: async () => {
+          setDialog(null)
+          try {
+            const promises = Array.from(selectedProjects).map(id => api.delete(`/api/supabase/${id}`))
+            await Promise.all(promises)
+            setSelectedProjects(new Set())
+            load()
+          } catch (e) {
+            showError('Bulk Action Failed', e.message)
+          }
+        },
+        onCancel: () => setDialog(null)
       })
+      return
+    }
+    
+    try {
+      const promises = Array.from(selectedProjects).map(id => api.post(`/api/supabase/${id}/${action}`))
       await Promise.all(promises)
       setSelectedProjects(new Set())
       load()
-    } catch (e) { alert(e.message) }
+    } catch (e) {
+      showError('Bulk Action Failed', e.message)
+    }
   }
 
   const toggleSelect = (id) => {
@@ -839,7 +868,7 @@ export default function SupabasePage() {
       a.click()
       window.URL.revokeObjectURL(url)
     } catch (e) {
-      alert(e.message)
+      showError('Backup Failed', e.message)
     } finally {
       setActionLoading(false)
     }
@@ -853,24 +882,31 @@ export default function SupabasePage() {
       const file = fileInput.files[0]
       if (!file) return
       
-      if (!confirm(`⚠️ CRITICAL WARNING: Restoring this backup SQL file will completely overwrite your Supabase database schema and all existing data. Are you sure you want to proceed?`)) return
-      
-      const formData = new FormData()
-      formData.append('restoreFile', file)
-      
-      setActionTitle('Restoring Database Backup...')
-      setActionMessage('Uploading SQL file, re-provisioning schema, and importing all tables and records. Please wait.')
-      setActionLoading(true)
-      try {
-        const { data } = await api.post(`/api/supabase/${id}/restore`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        alert(data.message || '✓ Database successfully restored!')
-      } catch (err) {
-        alert(err.response?.data?.error || err.message)
-      } finally {
-        setActionLoading(false)
-      }
+      setDialog({
+        title: '⚠️ CRITICAL WARNING',
+        message: `Restoring this backup SQL file will completely overwrite your Supabase database schema and all existing data inside project. Are you sure you want to proceed?`,
+        type: 'confirm',
+        onConfirm: async () => {
+          setDialog(null)
+          const formData = new FormData()
+          formData.append('restoreFile', file)
+          
+          setActionTitle('Restoring Database Backup...')
+          setActionMessage('Uploading SQL file, re-provisioning schema, and importing all tables and records. Please wait.')
+          setActionLoading(true)
+          try {
+            const { data } = await api.post(`/api/supabase/${id}/restore`, formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            })
+            showSuccess('Database Restored', data.message || '✓ Database successfully restored!')
+          } catch (err) {
+            showError('Restoration Error', err.response?.data?.error || err.message)
+          } finally {
+            setActionLoading(false)
+          }
+        },
+        onCancel: () => setDialog(null)
+      })
     }
     fileInput.click()
   }
@@ -1076,6 +1112,7 @@ export default function SupabasePage() {
           </div>
         </Overlay>
       )}
+      {dialog && <Dialog {...dialog} />}
     </div>
   )
 }

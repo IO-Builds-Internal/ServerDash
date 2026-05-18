@@ -4,13 +4,14 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard, Globe, Package, FolderOpen, Container,
   Database, Mail, Settings, ChevronLeft, ChevronRight,
-  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon, HardDrive, Archive
+  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon, HardDrive, Archive, Shield, LineChart
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
 import { useTheme } from '../contexts/ThemeContext'
 
 const navItems = [
   { path: '/overview', icon: LayoutDashboard, label: 'Overview' },
+  { path: '/analytics', icon: LineChart, label: 'Web Analytics' },
   { path: '/websites', icon: Globe, label: 'Websites' },
   { path: '/ftp', icon: HardDrive, label: 'FTP Accounts' },
   { path: '/packages', icon: Package, label: 'Packages' },
@@ -20,6 +21,7 @@ const navItems = [
   { path: '/smtp', icon: Mail, label: 'SMTP & Mail' },
   { path: '/snapshots', icon: Archive, label: 'Server Snapshots' },
   { path: '/ports', icon: Activity, label: 'Ports Monitor' },
+  { path: '/firewall', icon: Shield, label: 'Firewall Shield' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ]
 

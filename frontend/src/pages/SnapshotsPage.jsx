@@ -4,21 +4,32 @@ import {
   Archive, Plus, RefreshCw, Trash2, Download, RotateCcw, 
   Check, AlertTriangle, ShieldCheck, ShieldAlert, Clock, Database, FileCode
 } from 'lucide-react'
+import { Dialog } from '../components/Dialog'
 
 export default function SnapshotsPage() {
   const [snapshots, setSnapshots] = useState([])
+  const [storage, setStorage] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [creating, setCreating] = useState(false)
   const [restoring, setRestoring] = useState(null) // holds snapshot filename being restored
+  const [dialog, setDialog] = useState(null)
+
+  const showSuccess = (title, message) => {
+    setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
+  }
+  const showError = (title, message) => {
+    setDialog({ title, message, type: 'warning', onConfirm: () => setDialog(null) })
+  }
 
   const loadSnapshots = async () => {
     setLoading(true)
     setError(null)
     try {
       const { data } = await api.get('/api/snapshots')
-      setSnapshots(data)
+      setSnapshots(data.snapshots || [])
+      setStorage(data.storage || null)
     } catch (err) {
       setError(err.response?.data?.error || err.message)
     } finally {
@@ -35,7 +46,8 @@ export default function SnapshotsPage() {
     setError(null)
     setSuccess(null)
     try {
-      const { data } = await api.post('/api/snapshots')
+      // Set robust 5-minute timeout for large server snapshot generation
+      const { data } = await api.post('/api/snapshots', null, { timeout: 300000 })
       setSuccess(data.message)
       await loadSnapshots()
     } catch (err) {
@@ -46,33 +58,50 @@ export default function SnapshotsPage() {
   }
 
   const deleteSnapshot = async (filename) => {
-    if (!confirm(`Are you sure you want to permanently delete snapshot '${filename}' from the server?`)) return
-    setError(null)
-    setSuccess(null)
-    try {
-      const { data } = await api.delete(`/api/snapshots/${filename}`)
-      setSuccess(data.message)
-      await loadSnapshots()
-    } catch (err) {
-      setError(err.response?.data?.error || err.message)
-    }
+    setDialog({
+      title: 'Delete Snapshot?',
+      message: `Are you sure you want to permanently delete snapshot '${filename}' from the server? This cannot be undone.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setError(null)
+        setSuccess(null)
+        try {
+          const { data } = await api.delete(`/api/snapshots/${filename}`, { timeout: 60000 })
+          setSuccess(data.message)
+          await loadSnapshots()
+        } catch (err) {
+          setError(err.response?.data?.error || err.message)
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const restoreSnapshot = async (filename) => {
-    if (!confirm(`⚠️ CRITICAL WARNING: Restoring server snapshot will overwrite existing website files, Nginx configurations, and MariaDB databases. Are you absolutely certain you want to proceed?`)) return
-    
-    setRestoring(filename)
-    setError(null)
-    setSuccess(null)
-    try {
-      const { data } = await api.post(`/api/snapshots/${filename}/restore`)
-      setSuccess(data.message)
-      alert('✓ Full Server Restore completed successfully!')
-    } catch (err) {
-      setError(err.response?.data?.error || err.message)
-    } finally {
-      setRestoring(null)
-    }
+    setDialog({
+      title: '⚠️ CRITICAL WARNING',
+      message: `Restoring server snapshot will overwrite existing website files, Nginx configurations, and MariaDB databases. Are you absolutely certain you want to proceed?`,
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setRestoring(filename)
+        setError(null)
+        setSuccess(null)
+        try {
+          // Set robust 5-minute timeout for full system extract/restore sequence
+          const { data } = await api.post(`/api/snapshots/${filename}/restore`, null, { timeout: 300000 })
+          setSuccess(data.message)
+          showSuccess('Server Restored', '✓ Full Server Restore completed successfully!')
+        } catch (err) {
+          setError(err.response?.data?.error || err.message)
+        } finally {
+          setRestoring(null)
+          await loadSnapshots()
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const downloadSnapshot = (filename) => {
@@ -124,6 +153,44 @@ export default function SnapshotsPage() {
         <div style={{ padding: '14px 20px', borderRadius: 12, background: 'rgba(16,185,129,0.03)', border: '1px solid rgba(16,185,129,0.15)', color: 'var(--color-success)', fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 10 }}>
           <Check size={18} />
           <span>{success}</span>
+        </div>
+      )}
+
+      {/* Storage Capacity Status Banner */}
+      {storage && (
+        <div className="glass-card animate-fade-in" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10, background: 'rgba(255, 255, 255, 0.015)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.875rem', fontWeight: 800, color: 'var(--color-text)' }}>
+              <span style={{ fontSize: '1.1rem' }}>💾</span>
+              Backup Storage Disk space
+            </div>
+            <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+              {formatSize(storage.used)} Used of {formatSize(storage.total)} ({storage.usePercent})
+            </span>
+          </div>
+          
+          {/* Progress bar container */}
+          <div style={{ width: '100%', height: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 5, overflow: 'hidden', border: '1px solid var(--color-border)' }}>
+            <div 
+              style={{ 
+                width: storage.usePercent, 
+                height: '100%', 
+                background: parseFloat(storage.usePercent) > 90 ? '#ef4444' : parseFloat(storage.usePercent) > 75 ? '#f59e0b' : 'linear-gradient(90deg, #3b82f6, #6366f1)',
+                transition: 'width 0.4s ease'
+              }} 
+            />
+          </div>
+          
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+            <span>Available: <strong style={{ color: 'var(--color-text)' }}>{formatSize(storage.available)}</strong></span>
+            {storage.available < 5000000000 ? (
+              <span style={{ color: '#f87171', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+                ⚠️ Disk space is critically low! Taking a new snapshot may fail or exhaust host space.
+              </span>
+            ) : (
+              <span style={{ color: '#34d399', fontWeight: 600 }}>✓ Ample disk space is available for server snapshots.</span>
+            )}
+          </div>
         </div>
       )}
 
@@ -249,6 +316,7 @@ export default function SnapshotsPage() {
 
       </div>
 
+      {dialog && <Dialog {...dialog} />}
     </div>
   )
 }

@@ -98,21 +98,24 @@ cd "$SD_DIR/frontend"
 npm install
 npm run build
 
+# 9.5 Sync compiled assets to Nginx traversable path
+echo -e "\n📂 Synchronizing static assets to secure web directory..."
+mkdir -p /var/www/serverdash/dist
+cp -r "$SD_DIR/frontend/dist"/* /var/www/serverdash/dist/
+chown -R www-data:www-data /var/www/serverdash
+chmod -R 755 /var/www/serverdash
+
 # 10. Configure Nginx Unified Reverse Proxy
 echo -e "\n🌐 Configuring Nginx reverse-proxy gateway..."
-NGINX_CONF="/etc/nginx/sites-available/default"
-
-# Backup original default config
-if [ -f "$NGINX_CONF" ]; then
-  mv "$NGINX_CONF" "${NGINX_CONF}.backup.$(date +%F)"
-fi
+NGINX_CONF="/etc/nginx/sites-available/serverdash"
 
 cat <<'EOF' > "$NGINX_CONF"
 server {
-    listen 80;
+    listen 80 default_server;
+    listen [::]:80 default_server;
     server_name _;
 
-    root /root/ServerDash/frontend/dist;
+    root /var/www/serverdash/dist;
     index index.html;
 
     location / {
@@ -134,6 +137,10 @@ server {
 }
 EOF
 
+# Enable ServerDash site and remove default
+rm -f /etc/nginx/sites-enabled/default
+ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/serverdash
+
 # Restart Nginx
 systemctl restart nginx
 
@@ -146,14 +153,24 @@ pm2 save
 pm2 startup | tail -n 1 | bash # Set up PM2 system startup persistence
 
 # 12. Adjust Firewall
-echo -e "\n🛡️ Adjusting firewall rules (allowing SSH and Port 80)..."
+echo -e "\n🛡️ Adjusting firewall rules (allowing SSH, HTTP, HTTPS and panel ports)..."
 if command -v ufw &> /dev/null; then
   ufw allow 22/tcp
   ufw allow 80/tcp
+  ufw allow 443/tcp
+  ufw allow 4001/tcp
+  ufw allow 5173/tcp
   ufw --force enable
 fi
 
-# 13. Output Beautiful Setup Completion Dashboard
+# 13. Pre-cache Supabase Repository (One-time download for instant project setup)
+echo -e "\n🐳 Pre-caching Supabase Docker Repository..."
+mkdir -p /opt/supabase-projects
+if [ ! -d "/opt/supabase-repo" ]; then
+  git clone --depth 1 https://github.com/supabase/supabase.git /opt/supabase-repo
+fi
+
+# 14. Output Beautiful Setup Completion Dashboard
 echo -e "\n\e[32m=========================================================="
 echo "    🎉 SERVERDASH PANEL INSTALLED SUCCESSFULLY! 🎉"
 echo "==========================================================\e[0m"

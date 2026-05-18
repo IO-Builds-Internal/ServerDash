@@ -5,27 +5,7 @@ import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, Shield
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
 
-function Overlay({ children, onClose }) {
-  return createPortal(
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 9999,
-        background: 'rgba(0,0,0,0.78)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        backdropFilter: 'blur(3px)',
-      }}
-      onClick={e => { if (e.target === e.currentTarget) onClose?.() }}
-    >
-      {children}
-    </div>,
-    document.body
-  )
-}
+import { Dialog, Overlay } from '../components/Dialog'
 
 // ── Nginx Config Editor Modal ────────────────────────────────────────────────
 function NginxEditor({ site, onClose }) {
@@ -500,6 +480,14 @@ export default function WebsitesPage() {
   const [actionLoading, setActionLoading] = useState(false)
   const [actionTitle, setActionTitle] = useState('')
   const [actionMessage, setActionMessage] = useState('')
+  const [dialog, setDialog] = useState(null)
+
+  const showSuccess = (title, message) => {
+    setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
+  }
+  const showError = (title, message) => {
+    setDialog({ title, message, type: 'warning', onConfirm: () => setDialog(null) })
+  }
 
   const load = useCallback(async () => {
     try {
@@ -534,7 +522,7 @@ export default function WebsitesPage() {
       a.click()
       window.URL.revokeObjectURL(url)
     } catch (e) {
-      alert(e.message)
+      showError('Backup Error', e.message)
     } finally {
       setActionLoading(false)
     }
@@ -548,25 +536,32 @@ export default function WebsitesPage() {
       const file = fileInput.files[0]
       if (!file) return
       
-      if (!confirm(`⚠️ CRITICAL WARNING: Restoring from a website backup will overwrite existing files, configurations, and MySQL databases for this domain. Are you sure you want to proceed?`)) return
-      
-      const formData = new FormData()
-      formData.append('backupZip', file)
-      
-      setActionTitle('Restoring Full Website from ZIP...')
-      setActionMessage('Uploading archive, recreating root folders, mapping virtual hosts, and reconstructing SQL databases. Please wait.')
-      setActionLoading(true)
-      try {
-        const { data } = await api.post(`/api/sites/restore`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        alert(data.message || '✓ Website successfully restored!')
-        await load()
-      } catch (err) {
-        alert(err.response?.data?.error || err.message)
-      } finally {
-        setActionLoading(false)
-      }
+      setDialog({
+        title: '⚠️ CRITICAL WARNING',
+        message: 'Restoring from a website backup will completely overwrite existing files, configurations, and MySQL databases for this domain. Are you sure you want to proceed?',
+        type: 'confirm',
+        onConfirm: async () => {
+          setDialog(null)
+          const formData = new FormData()
+          formData.append('backupZip', file)
+          
+          setActionTitle('Restoring Full Website from ZIP...')
+          setActionMessage('Uploading archive, recreating root folders, mapping virtual hosts, and reconstructing SQL databases. Please wait.')
+          setActionLoading(true)
+          try {
+            const { data } = await api.post(`/api/sites/restore`, formData, {
+              headers: { 'Content-Type': 'multipart/form-data' }
+            })
+            showSuccess('Website Restored', data.message || `✓ Website '${file.name}' successfully restored!`)
+            await load()
+          } catch (err) {
+            showError('Restoration Error', err.response?.data?.error || err.message)
+          } finally {
+            setActionLoading(false)
+          }
+        },
+        onCancel: () => setDialog(null)
+      })
     }
     fileInput.click()
   }
@@ -618,13 +613,24 @@ export default function WebsitesPage() {
                       {site.domain}
                     </div>
                     <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
-                      <span style={{ 
-                        fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, fontWeight: 700, 
-                        background: `${TYPE_COLORS[site.type] || '#6b7280'}1a`, color: TYPE_COLORS[site.type] || '#6b7280' 
-                      }}>
-                        {TYPE_LABELS[site.type] || site.type}
-                      </span>
-                      {site.ssl ? (
+                      {site.status === 'no-nginx' ? (
+                        <span style={{ 
+                          fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, fontWeight: 700, 
+                          background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-danger)'
+                        }}>
+                          Orphan / No Nginx
+                        </span>
+                      ) : (
+                        <span style={{ 
+                          fontSize: '0.65rem', padding: '1px 6px', borderRadius: 4, fontWeight: 700, 
+                          background: `${TYPE_COLORS[site.type] || '#6b7280'}1a`, color: TYPE_COLORS[site.type] || '#6b7280' 
+                        }}>
+                          {TYPE_LABELS[site.type] || site.type}
+                        </span>
+                      )}
+                      {site.status === 'no-nginx' ? (
+                        <span className="badge badge-secondary" style={{ fontSize: '0.625rem', padding: '1px 5px', opacity: 0.7 }}>Inactive</span>
+                      ) : site.ssl ? (
                         <span className="badge badge-green" style={{ fontSize: '0.625rem', padding: '1px 5px' }}>✓ SSL</span>
                       ) : (
                         <span className="badge badge-red" style={{ fontSize: '0.625rem', padding: '1px 5px' }}>HTTP</span>
@@ -697,6 +703,7 @@ export default function WebsitesPage() {
           </div>
         </Overlay>
       )}
+      {dialog && <Dialog {...dialog} />}
     </div>
   )
 }

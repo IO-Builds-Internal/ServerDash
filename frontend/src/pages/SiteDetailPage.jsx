@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import api from '../lib/api'
 import { localAuth } from '../lib/auth'
+import { Dialog } from '../components/Dialog'
 import { 
   Globe, ArrowLeft, ShieldCheck, ShieldAlert, FolderOpen, 
   Terminal, FileCode, RotateCcw, Save, Trash2, ExternalLink, 
@@ -82,24 +83,41 @@ export default function SiteDetailPage() {
   const [showDbPassword, setShowDbPassword] = useState(false)
   const [resettingDb, setResettingDb] = useState(false)
 
+  const [dialog, setDialog] = useState(null)
+
+  const showSuccess = (title, message) => {
+    setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
+  }
+  const showError = (title, message) => {
+    setDialog({ title, message, type: 'warning', onConfirm: () => setDialog(null) })
+  }
+
   const termRef = useRef()
 
   const resetDbPassword = async () => {
-    if (!confirm('Are you absolutely sure you want to reset the database password? This will alter the MySQL user credentials and overwrite the password in the website configurations.')) return
-    setResettingDb(true)
-    try {
-      const res = await api.post(`/api/sites/${id}/db-reset-password`)
-      if (res.data && res.data.success) {
-        alert(`✓ Database password reset successfully!\nNew password: ${res.data.newPassword}`)
-        // Reload site details
-        const r = await api.get(`/api/sites/${id}`)
-        setSite(r.data)
-      }
-    } catch (e) {
-      alert(`✗ Failed to reset DB password: ${e.response?.data?.error || e.message}`)
-    } finally {
-      setResettingDb(false)
-    }
+    setDialog({
+      title: 'Reset Database Password?',
+      message: 'Are you absolutely sure you want to reset the database password? This will alter the MySQL user credentials and overwrite the password in the website configurations.',
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setResettingDb(true)
+        try {
+          const res = await api.post(`/api/sites/${id}/db-reset-password`)
+          if (res.data && res.data.success) {
+            showSuccess('Password Reset Success', `✓ Database password reset successfully!\n\nNew password: ${res.data.newPassword}`)
+            // Reload site details
+            const r = await api.get(`/api/sites/${id}`)
+            setSite(r.data)
+          }
+        } catch (e) {
+          showError('Failed to Reset Password', e.response?.data?.error || e.message)
+        } finally {
+          setResettingDb(false)
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const loadSite = async () => {
@@ -176,7 +194,7 @@ export default function SiteDetailPage() {
       setEnvSaved(true)
       setTimeout(() => setEnvSaved(false), 3000)
     } catch (e) {
-      alert('Failed to save .env file: ' + (e.response?.data?.error || e.message))
+      showError('Save Error', 'Failed to save .env file: ' + (e.response?.data?.error || e.message))
     } finally {
       setEnvSaving(false)
     }
@@ -189,7 +207,7 @@ export default function SiteDetailPage() {
     
     // Check if key already exists
     if (envPairs.some(p => p.key === key)) {
-      alert(`Variable ${key} already exists. Please edit it or remove it first.`)
+      showError('Variable Exists', `Variable ${key} already exists. Please edit it or remove it first.`)
       return
     }
 
@@ -234,7 +252,7 @@ export default function SiteDetailPage() {
       setBuildSaved(true)
       setTimeout(() => setBuildSaved(false), 3000)
     } catch (e) {
-      alert('Failed to save build settings: ' + (e.response?.data?.error || e.message))
+      showError('Save Error', 'Failed to save build settings: ' + (e.response?.data?.error || e.message))
     } finally {
       setBuildSaving(false)
     }
@@ -302,19 +320,27 @@ export default function SiteDetailPage() {
   }
 
   const deleteMailbox = async (username) => {
-    if (!confirm(`Are you sure you want to delete mailbox '${username}'?`)) return
-    setMailBusy(true)
-    setMailError(null)
-    setMailSuccess(null)
-    try {
-      const { data } = await api.delete(`/api/sites/${id}/mail/mailbox/${username}`)
-      setMailSuccess(data.message)
-      await loadMail()
-    } catch (e) {
-      setMailError(e.response?.data?.error || e.message)
-    } finally {
-      setMailBusy(false)
-    }
+    setDialog({
+      title: 'Delete Mailbox?',
+      message: `Are you sure you want to permanently delete mailbox '${username}'? This will delete all emails contained within it.`,
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setMailBusy(true)
+        setMailError(null)
+        setMailSuccess(null)
+        try {
+          const { data } = await api.delete(`/api/sites/${id}/mail/mailbox/${username}`)
+          setMailSuccess(data.message)
+          await loadMail()
+        } catch (e) {
+          setMailError(e.response?.data?.error || e.message)
+        } finally {
+          setMailBusy(false)
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const createForwarder = async (e) => {
@@ -336,19 +362,27 @@ export default function SiteDetailPage() {
   }
 
   const deleteForwarder = async (source) => {
-    if (!confirm(`Are you sure you want to delete the email forwarder for '${source}'?`)) return
-    setMailBusy(true)
-    setMailError(null)
-    setMailSuccess(null)
-    try {
-      const { data } = await api.delete(`/api/sites/${id}/mail/forwarder/${source}`)
-      setMailSuccess(data.message)
-      await loadMail()
-    } catch (e) {
-      setMailError(e.response?.data?.error || e.message)
-    } finally {
-      setMailBusy(false)
-    }
+    setDialog({
+      title: 'Delete Forwarder?',
+      message: `Are you sure you want to permanently delete the email forwarder for '${source}'?`,
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setMailBusy(true)
+        setMailError(null)
+        setMailSuccess(null)
+        try {
+          const { data } = await api.delete(`/api/sites/${id}/mail/forwarder/${source}`)
+          setMailSuccess(data.message)
+          await loadMail()
+        } catch (e) {
+          setMailError(e.response?.data?.error || e.message)
+        } finally {
+          setMailBusy(false)
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
   }
 
   const testDomainMail = async () => {
@@ -399,7 +433,8 @@ export default function SiteDetailPage() {
   }
 
   const runDeploy = async (commitHash) => {
-    setActionLogs([commitHash ? `▶ Triggering rollback to commit ${commitHash}...` : '▶ Triggering website deployment...'])
+    const actualHash = typeof commitHash === 'string' ? commitHash : null
+    setActionLogs([actualHash ? `▶ Triggering rollback to commit ${actualHash}...` : '▶ Triggering website deployment...'])
     setShowLogs(true)
     setActionBusy(true)
     setActiveTab('deployments')
@@ -412,7 +447,7 @@ export default function SiteDetailPage() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ commitHash })
+        body: JSON.stringify({ commitHash: actualHash })
       })
       
       const reader = resp.body.getReader()
@@ -523,8 +558,12 @@ export default function SiteDetailPage() {
               )}
             </div>
             <p style={{ color:'var(--color-text-muted)', fontSize:'0.85rem', margin:'6px 0 0 0', display:'flex', alignItems:'center', gap:6 }}>
-              Status: <span style={{ color: site.status === 'active' ? 'var(--color-success)' : 'var(--color-warning)', fontWeight:700, display:'flex', alignItems:'center', gap:4 }}>
-                <span style={{ width:8, height:8, borderRadius:'50%', background:'currentColor', display:'inline-block' }} className="animate-pulse-dot"/> {site.status || 'Active'}
+              Status: <span style={{ 
+                color: (site.status === 'active' || site.status === 'Running') ? 'var(--color-success)' : 'var(--color-warning)', 
+                fontWeight:700, display:'flex', alignItems:'center', gap:4 
+              }}>
+                <span style={{ width:8, height:8, borderRadius:'50%', background:'currentColor', display:'inline-block' }} className={(site.status === 'active' || site.status === 'Running') ? "animate-pulse-dot" : ""}/> 
+                {site.status === 'no-nginx' ? 'Inactive (No Nginx Config)' : (site.status || 'Active')}
               </span>
               {gitData?.hasGit && (
                 <>
@@ -747,13 +786,27 @@ export default function SiteDetailPage() {
               {/* Active Server specs widget */}
               <div className="glass-card" style={{ padding:24, display:'flex', flexDirection:'column', gap:12 }}>
                 <h4 style={{ margin:0, fontSize:'0.75rem', fontWeight:800, textTransform:'uppercase', color:'var(--color-text-muted)', letterSpacing:'0.06em' }}>Live Deployment Status</h4>
-                <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                  <span style={{ fontSize:'2rem', fontWeight:800 }}>100%</span>
-                  <span className="badge badge-green" style={{ padding:'2px 8px' }}>Active</span>
-                </div>
-                <div style={{ fontSize:'0.78rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
-                  Your website domain <strong>{site.domain}</strong> is active and served correctly under reverse Nginx proxying.
-                </div>
+                {site.status === 'no-nginx' ? (
+                  <>
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <span style={{ fontSize:'2rem', fontWeight:800, color: 'var(--color-warning)' }}>0%</span>
+                      <span className="badge badge-red" style={{ padding:'2px 8px' }}>Orphaned</span>
+                    </div>
+                    <div style={{ fontSize:'0.78rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                      This website directory exists in <code>/var/www</code> but has <strong>no active Nginx config</strong>. Nginx is not currently serving it.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <span style={{ fontSize:'2rem', fontWeight:800 }}>100%</span>
+                      <span className="badge badge-green" style={{ padding:'2px 8px' }}>Active</span>
+                    </div>
+                    <div style={{ fontSize:'0.78rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                      Your website domain <strong>{site.domain}</strong> is active and served correctly under {site.type === 'proxy' ? 'reverse Nginx proxying' : 'Nginx direct file serving'}.
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1151,9 +1204,16 @@ export default function SiteDetailPage() {
                                 className="btn btn-secondary btn-sm" 
                                 style={{ gap: 6, padding: '5px 12px', fontSize: '0.75rem', flexShrink: 0 }} 
                                 onClick={() => {
-                                  if (confirm(`Are you sure you want to roll back this website to commit ${commit.hash} (${commit.subject})? This will hard reset the git state and trigger a complete rebuild.`)) {
-                                    runDeploy(commit.hash)
-                                  }
+                                  setDialog({
+                                    title: 'Rollback Deployment?',
+                                    message: `Are you sure you want to roll back this website to commit ${commit.hash} (${commit.subject})? This will hard reset the git state and trigger a complete rebuild.`,
+                                    type: 'confirm',
+                                    onConfirm: () => {
+                                      setDialog(null)
+                                      runDeploy(commit.hash)
+                                    },
+                                    onCancel: () => setDialog(null)
+                                  })
                                 }}
                                 disabled={actionBusy}
                               >
@@ -1526,21 +1586,24 @@ export default function SiteDetailPage() {
             <p style={{ margin:'14px 0', fontSize:'0.9rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
               Are you sure you want to delete the configuration files for <strong>{site.domain}</strong>? This will remove Nginx virtual hosts.
             </p>
-            {site.root && (
-              <div style={{ display:'flex', alignItems:'flex-start', gap:10, background:'rgba(239,68,68,0.06)', padding:14, borderRadius:10, border:'1px solid rgba(239,68,68,0.15)' }}>
-                <input 
-                  type="checkbox" 
-                  id="del-files-detail" 
-                  checked={deleteWithFiles} 
-                  onChange={e => setDeleteWithFiles(e.target.checked)} 
-                  style={{ width:18, height:18, marginTop:2, cursor:'pointer' }}
-                />
-                <label htmlFor="del-files-detail" style={{ fontSize:'0.85rem', cursor:'pointer', color:'var(--color-text-dim)', lineHeight:1.4 }}>
-                  <strong>Also permanently delete site files</strong> located at:<br/>
-                  <code style={{ fontSize:'0.75rem', color:'#f87171', background:'rgba(0,0,0,0.2)', padding:'2px 4px', borderRadius:4, marginTop:4, display:'inline-block' }}>{site.root}</code>
-                </label>
-              </div>
-            )}
+            {(() => {
+              const targetRoot = site.root || `/var/www/${site.domain}`
+              return (
+                <div style={{ display:'flex', alignItems:'flex-start', gap:10, background:'rgba(239,68,68,0.06)', padding:14, borderRadius:10, border:'1px solid rgba(239,68,68,0.15)' }}>
+                  <input 
+                    type="checkbox" 
+                    id="del-files-detail" 
+                    checked={deleteWithFiles} 
+                    onChange={e => setDeleteWithFiles(e.target.checked)} 
+                    style={{ width:18, height:18, marginTop:2, cursor:'pointer' }}
+                  />
+                  <label htmlFor="del-files-detail" style={{ fontSize:'0.85rem', cursor:'pointer', color:'var(--color-text-dim)', lineHeight:1.4 }}>
+                    <strong>Also permanently delete site files</strong> located at:<br/>
+                    <code style={{ fontSize:'0.75rem', color:'#f87171', background:'rgba(0,0,0,0.2)', padding:'2px 4px', borderRadius:4, marginTop:4, display:'inline-block' }}>{targetRoot}</code>
+                  </label>
+                </div>
+              )
+            })()}
             <div style={{ display:'flex', justifyContent:'flex-end', gap:12, marginTop:20 }}>
               <button className="btn btn-secondary" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</button>
               <button className="btn btn-danger" onClick={performDelete} disabled={deleting}>
@@ -1550,6 +1613,7 @@ export default function SiteDetailPage() {
           </div>
         </div>
       )}
+      {dialog && <Dialog {...dialog} />}
     </div>
   )
 }

@@ -18,6 +18,8 @@ import SiteDetailPage from './pages/SiteDetailPage'
 import PortsPage from './pages/PortsPage'
 import FtpPage from './pages/FtpPage'
 import SnapshotsPage from './pages/SnapshotsPage'
+import FirewallPage from './pages/FirewallPage'
+import AnalyticsPage from './pages/AnalyticsPage'
 import { Server } from 'lucide-react'
 import { BrandingProvider, useBranding } from './contexts/BrandingContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -31,6 +33,7 @@ function DashboardLayout() {
       <main style={{ flex: 1, overflow: 'auto', padding: '24px', minWidth: 0 }}>
         <Routes>
           <Route path="/overview" element={<OverviewPage onConnectionChange={setConnected} />} />
+          <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/websites" element={<WebsitesPage />} />
           <Route path="/websites/manage/:id" element={<SiteDetailPage />} />
           <Route path="/ftp" element={<FtpPage />} />
@@ -42,6 +45,7 @@ function DashboardLayout() {
           <Route path="/smtp" element={<SmtpPage />} />
           <Route path="/snapshots" element={<SnapshotsPage />} />
           <Route path="/ports" element={<PortsPage />} />
+          <Route path="/firewall" element={<FirewallPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>

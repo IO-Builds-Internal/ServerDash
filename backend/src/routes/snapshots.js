@@ -9,6 +9,26 @@ const logger = require('../logger')
 
 const BACKUP_DIR = '/var/backups/serverdash'
 
+function getAvailableStorage() {
+  try {
+    const { execSync } = require('child_process')
+    const stdout = execSync('df -B1 /var/backups/serverdash 2>/dev/null || df -B1 /').toString()
+    const lines = stdout.trim().split('\n')
+    if (lines.length >= 2) {
+      const parts = lines[1].replace(/\s+/g, ' ').split(' ')
+      return {
+        total: parseInt(parts[1]) || 0,
+        used: parseInt(parts[2]) || 0,
+        available: parseInt(parts[3]) || 0,
+        usePercent: parts[4] || '0%'
+      }
+    }
+  } catch (err) {
+    logger.error('Failed to get disk space for snapshots', { error: err.message })
+  }
+  return null
+}
+
 // Ensure backup folder exists
 if (!fs.existsSync(BACKUP_DIR)) {
   try {
@@ -22,7 +42,7 @@ if (!fs.existsSync(BACKUP_DIR)) {
 router.get('/', async (req, res) => {
   try {
     if (!fs.existsSync(BACKUP_DIR)) {
-      return res.json([])
+      return res.json({ snapshots: [], storage: getAvailableStorage() })
     }
 
     const files = fs.readdirSync(BACKUP_DIR)
@@ -39,7 +59,10 @@ router.get('/', async (req, res) => {
       // Sort by newest first
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 
-    res.json(files)
+    res.json({
+      snapshots: files,
+      storage: getAvailableStorage()
+    })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -64,9 +87,9 @@ router.post('/', async (req, res) => {
       await execAsync(`cp -r /etc/nginx/sites-available/* "${tempDir}/nginx/"`).catch(() => {})
     }
 
-    // 3. Backup Website files
+    // 3. Backup Website files (excluding heavy transient node_modules)
     if (fs.existsSync('/var/www')) {
-      await execAsync(`cp -r /var/www/* "${tempDir}/www/"`).catch(() => {})
+      await execAsync(`rsync -a --exclude="node_modules" /var/www/ "${tempDir}/www/"`).catch(() => {})
     }
 
     // 4. Backup internal ServerDash metadata lists
@@ -113,20 +136,23 @@ router.get('/:filename/download', (req, res) => {
 })
 
 // ── DELETE /api/snapshots/:filename ───────────────────────────────────────────
-router.delete('/:filename', (req, res) => {
+router.delete('/:filename', async (req, res) => {
   const filename = req.params.filename
   if (filename.includes('/') || filename.includes('..')) {
     return res.status(400).json({ error: 'Invalid filename' })
   }
 
   const filePath = path.join(BACKUP_DIR, filename)
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: 'Snapshot not found' })
-  }
-
+  
   try {
-    fs.unlinkSync(filePath)
-    res.json({ success: true, message: 'Server snapshot deleted successfully.' })
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath)
+    }
+    
+    // Also clean up any lingering crashed/clement temporary workspaces to free up storage
+    await execAsync('rm -rf /tmp/sd-snap-* /tmp/sd-restore-snap-*').catch(() => {})
+    
+    res.json({ success: true, message: 'Server snapshot and all temporary file caches cleaned up successfully.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }

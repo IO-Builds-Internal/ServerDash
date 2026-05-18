@@ -894,25 +894,62 @@ router.delete('/:id', async (req, res) => {
   const deleteFiles = req.query.deleteFiles === 'true'
   try {
     const sites = await getNginxSites()
-    const site = sites.find(s => s.id === id)
+    let site = sites.find(s => s.id === id)
+
+    // Fallback for no-nginx sites or sites that have already had their nginx config deleted
+    if (!site) {
+      const domain = id.startsWith('www-') ? id.slice(4) : id
+      const possibleRoot = `/var/www/${domain}`
+      if (fs.existsSync(possibleRoot)) {
+        site = {
+          id,
+          domain,
+          root: possibleRoot,
+          configFile: null
+        }
+      }
+    }
+
     if (!site) return res.status(404).json({ error: 'Site not found' })
 
     // Only remove if we have an nginx config for it
     if (site.configFile) {
-      const realPath = fs.realpathSync(site.configFile)
-      try { await execAsync(`rm -f "${site.configFile}"`) } catch { }
-      try { await execAsync(`rm -f "${realPath}"`) } catch { }
+      try {
+        const realPath = fs.realpathSync(site.configFile)
+        try { await execAsync(`rm -f "${site.configFile}"`) } catch { }
+        try { await execAsync(`rm -f "${realPath}"`) } catch { }
+      } catch (e) {
+        try { await execAsync(`rm -f "${site.configFile}"`) } catch { }
+      }
     }
     
     if (deleteFiles) {
       const root = site.root || `/var/www/${site.domain || id}`
       if (root.startsWith('/var/www/')) {
+        // Kill any processes having open files inside the root directory to prevent "Directory not empty" lock
+        try {
+          const { stdout: pids } = await execAsync(`lsof -t +D "${root}" || true`)
+          const pidList = pids.split('\n').map(p => p.trim()).filter(Boolean)
+          if (pidList.length > 0) {
+            logger.info('Killing locked processes inside root', { root, pidList })
+            await execAsync(`kill -9 ${pidList.join(' ')} || true`)
+            // Small pause to let processes close descriptors
+            await new Promise(resolve => setTimeout(resolve, 500))
+          }
+        } catch (e) {
+          logger.warn('Failed to kill processes using directory', { error: e.message })
+        }
+
         await execAsync(`rm -rf "${root}"`)
         logger.info('Deleted site files', { root })
       }
     }
 
-    await execAsync('nginx -t && systemctl reload nginx')
+    try {
+      await execAsync('nginx -t && systemctl reload nginx')
+    } catch (e) {
+      logger.warn('Nginx reload skipped or failed after deletion', { error: e.message })
+    }
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -1531,10 +1568,10 @@ router.get('/:id/backup', async (req, res) => {
       }
     }
 
-    // 3. Copy website files (excluding heavy/transient directories)
+    // 3. Copy website files (excluding heavy dependency directories)
     if (fs.existsSync(site.root)) {
       await execAsync(
-        `rsync -a --exclude='node_modules' --exclude='.git' --exclude='dist' --exclude='.next' --exclude='.wrangler' --exclude='.tanstack' "${site.root}/" "${tmpBackupDir}/files/"`
+        `rsync -a --exclude='node_modules' "${site.root}/" "${tmpBackupDir}/files/"`
       ).catch(() => {})
     }
 
@@ -1609,10 +1646,7 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
     // 4. Copy website files
     const sourceFiles = `${extractDir}/files`
     if (fs.existsSync(sourceFiles)) {
-      await execAsync(`cp -rf sourceFiles=${sourceFiles}/* "${targetRoot}/"`).catch(async () => {
-        // Fallback robust copy
-        await execAsync(`cp -rf "${sourceFiles}"/. "${targetRoot}/"`)
-      })
+      await execAsync(`rsync -a "${sourceFiles}/" "${targetRoot}/"`)
     }
 
     // Copy .serverdash.json back
@@ -1625,11 +1659,15 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
     if (fs.existsSync(sqlPath)) {
       // Find credentials from site's .serverdash.json or database connection files
       const dbCreds = getDatabaseCredentials(targetRoot)
-      if (dbCreds && dbCreds.name) {
+      if (dbCreds && dbCreds.dbName) {
         // Create database if not exists
-        await execAsync(`mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`${dbCreds.name}\`;"`).catch(() => {})
+        await execAsync(`mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`${dbCreds.dbName}\`;"`).catch(() => {})
         // Import SQL
-        await execAsync(`mysql -u "${dbCreds.user}" -p"${dbCreds.password}" "${dbCreds.name}" < "${sqlPath}"`).catch(() => {})
+        if (dbCreds.dbUser && dbCreds.dbPass) {
+          await execAsync(`mysql -u "${dbCreds.dbUser}" -p"${dbCreds.dbPass}" "${dbCreds.dbName}" < "${sqlPath}"`).catch(() => {})
+        } else {
+          await execAsync(`mysql -u root "${dbCreds.dbName}" < "${sqlPath}"`).catch(() => {})
+        }
       }
     }
 
@@ -1638,6 +1676,28 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
       await execAsync('nginx -t')
       await execAsync('systemctl reload nginx')
     } catch {}
+
+    // 7. Revive / Restart background services (PM2) if specified in settings
+    const sdConfigPath = path.join(targetRoot, '.serverdash.json')
+    if (fs.existsSync(sdConfigPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(sdConfigPath, 'utf8'))
+        let restartCmd = meta.restartCommand || `pm2 restart "${domain}"`
+        const nodeVersion = meta.nodeVersion || 'system'
+        const prefix = nodeShellPrefix(nodeVersion)
+        
+        logger.info('Restored site has start settings, executing restart', { domain, restartCmd })
+        await execAsync(`cd "${targetRoot}" && ${prefix}${restartCmd} 2>&1`).catch(async () => {
+          // If restart failed because it's not registered/running, try starting it
+          if (restartCmd.includes('pm2 restart')) {
+            const startCmd = restartCmd.replace('restart', 'start')
+            await execAsync(`cd "${targetRoot}" && ${prefix}${startCmd} 2>&1`).catch(() => {})
+          }
+        })
+      } catch (e) {
+        logger.warn('Failed to auto-restart restored website application', { error: e.message })
+      }
+    }
 
     // Cleanup restore workspaces
     await execAsync(`rm -rf "${extractDir}"`)

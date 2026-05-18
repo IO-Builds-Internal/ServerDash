@@ -33,6 +33,86 @@ router.get('/list', async (req, res) => {
   }
 })
 
+// GET /api/packages/updates — show system runtimes, database, and package updates
+router.get('/updates', async (req, res) => {
+  try {
+    // 1. Get system software versions
+    const system = []
+    
+    // Node.js
+    try {
+      const { stdout } = await execAsync('node -v')
+      system.push({ name: 'Node.js Runtime', current: stdout.trim(), latest: 'v22.22.2', category: 'runtime' })
+    } catch {
+      system.push({ name: 'Node.js Runtime', current: 'Not Installed', latest: 'v22.22.2', category: 'runtime' })
+    }
+    
+    // Nginx
+    try {
+      const { stderr } = await execAsync('nginx -v')
+      const match = stderr.match(/nginx\/([\d.]+)/)
+      system.push({ name: 'Nginx Web Server', current: match ? match[1] : 'Unknown', latest: '1.26.1', category: 'server' })
+    } catch {
+      system.push({ name: 'Nginx Web Server', current: 'Not Installed', latest: '1.26.1', category: 'server' })
+    }
+    
+    // Docker
+    try {
+      const { stdout } = await execAsync('docker -v')
+      const match = stdout.match(/version\s+([\d.]+)/i)
+      system.push({ name: 'Docker Container Engine', current: match ? match[1] : 'Unknown', latest: '26.1.3', category: 'runtime' })
+    } catch {
+      system.push({ name: 'Docker Container Engine', current: 'Not Installed', latest: '26.1.3', category: 'runtime' })
+    }
+    
+    // MariaDB/MySQL
+    try {
+      const { stdout } = await execAsync('mysql -V')
+      const match = stdout.match(/Distrib\s+([\d.]+[\w-]+)/i)
+      system.push({ name: 'MariaDB Database', current: match ? match[1] : 'Unknown', latest: '10.11.8', category: 'database' })
+    } catch {
+      system.push({ name: 'MariaDB Database', current: 'Not Installed', latest: '10.11.8', category: 'database' })
+    }
+
+    // Try fetching actual Node.js release list with small timeout
+    try {
+      const axios = require('axios')
+      const nodeRelease = await axios.get('https://nodejs.org/download/release/index.json', { timeout: 1500 })
+      if (nodeRelease.data && nodeRelease.data.length > 0) {
+        system[0].latest = nodeRelease.data[0].version
+      }
+    } catch {}
+
+    // Calculate upgradable flag
+    system.forEach(v => {
+      v.upgradable = v.current !== 'Not Installed' && 
+                     v.current !== 'Unknown' && 
+                     v.current.replace('v', '').trim() !== v.latest.replace('v', '').trim()
+    })
+
+    // 2. Get upgradable packages from apt-get simulation
+    let upgradablePackages = []
+    try {
+      const { stdout } = await execAsync('apt-get -s upgrade 2>/dev/null')
+      const lines = stdout.split('\n')
+      for (const line of lines) {
+        const match = line.match(/^Inst\s+(\S+)\s+\[([^\]]+)\]\s+\(([^)]+)\)/)
+        if (match) {
+          upgradablePackages.push({
+            name: match[1],
+            current: match[2],
+            latest: match[3].split(' ')[0]
+          })
+        }
+      }
+    } catch {}
+
+    res.json({ system, upgradablePackages })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // GET /api/packages/search?q= — search apt-cache
 router.get('/search', async (req, res) => {
   const { q } = req.query
