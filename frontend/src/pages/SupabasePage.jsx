@@ -5,7 +5,7 @@ import {
   Database, Plus, Trash2, RefreshCw, Download, Eye, EyeOff,
   Play, Square, RotateCcw, Globe, Server, Network, AlertCircle, X, Copy, Check,
   Terminal, Upload, FolderOpen, FileText, Settings, ChevronRight, Layers,
-  Activity, ArrowDown, ArrowUp, Code2
+  Activity, ArrowDown, ArrowUp, Code2, ExternalLink, Shield, Info, Lock
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
@@ -16,10 +16,10 @@ function Overlay({ children, onClose }) {
     <div
       style={{
         position: 'fixed', inset: 0, zIndex: 9999,
-        background: 'rgba(0,0,0,0.88)',
+        background: 'rgba(7, 7, 9, 0.85)',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        padding: '20px',
-        backdropFilter: 'blur(4px)',
+        padding: '24px',
+        backdropFilter: 'blur(8px)',
       }}
       onClick={e => { if (e.target === e.currentTarget) onClose?.() }}
     >
@@ -39,10 +39,8 @@ function SupabaseWizard({ onClose, onCreated }) {
   const sqlInputRef = useRef(null)
   const terminalRef = useRef(null)
 
-  const genPw = (len = 24, safe = false) => {
-    const chars = safe
-      ? 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
-      : 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+  const genPw = (len = 24) => {
+    const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
     return Array.from(crypto.getRandomValues(new Uint32Array(len))).map(x => chars[x % chars.length]).join('')
   }
 
@@ -74,7 +72,7 @@ function SupabaseWizard({ onClose, onCreated }) {
       if (!resp.ok) {
         let errText = await resp.text()
         try { errText = JSON.parse(errText).error || errText } catch {}
-        throw new Error(errText || `Server returned ${resp.status}`)
+        throw new Error(errText || `Server returned status code ${resp.status}`)
       }
 
       const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
@@ -88,7 +86,7 @@ function SupabaseWizard({ onClose, onCreated }) {
       setDone(true)
       onCreated()  // refresh parent list
     } catch (e) {
-      setLines(p => [...p, `✗ Upload/Network Error: ${e.message}`])
+      setLines(p => [...p, `✗ Installation Aborted: ${e.message}`])
     } finally {
       setDeploying(false)
     }
@@ -96,101 +94,96 @@ function SupabaseWizard({ onClose, onCreated }) {
 
   return (
     <Overlay onClose={!deploying ? onClose : undefined}>
-      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 680, maxHeight: '92vh', overflowY: 'auto', padding: 32, display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 700, maxHeight: '92vh', overflowY: 'auto', padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 24, border: '1px solid rgba(255,255,255,0.06)' }}>
 
-        
         {step === 1 ? (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <h2 style={{ margin: 0, fontSize: '1.5rem', fontWeight: 700 }}>New Supabase Project</h2>
-                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Deploys the full official Supabase stack (Studio, Auth, Storage, REST, Realtime)</p>
+                <h2 style={{ margin: 0, fontSize: '1.45rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Database size={22} color="var(--color-primary)"/> Deploy Supabase Stack
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Sets up isolated PostgreSQL, GoTrue, Studio, REST API, Storage, and Realtime engines.</p>
               </div>
-              <button className="btn btn-secondary" onClick={onClose}><X size={16}/></button>
+              <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ padding: 6, height: 28, width: 28 }}><X size={15}/></button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="label">Project Name *</label>
-                <input className="input" value={form.name} onChange={e => set('name', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="my-project" autoFocus />
-                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Lowercase letters, numbers, dashes only. Used as the folder name.</p>
+                <label className="label" style={{ fontWeight: 600 }}>Project Name *</label>
+                <input className="input" value={form.name} onChange={e => set('name', e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="production-db" autoFocus />
+                <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Letters, numbers, and dashes only. Determines directory name inside server.</p>
               </div>
 
               <div>
-                <label className="label">Database Password *</label>
+                <label className="label" style={{ fontWeight: 600 }}>Database Secret Key *</label>
                 <div style={{ position: 'relative' }}>
-                  <input className="input" value={form.dbPassword} onChange={e => set('dbPassword', e.target.value)} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', paddingRight: 72 }} />
-                  <button onClick={() => set('dbPassword', genPw(32))} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Regen</button>
+                  <input className="input" value={form.dbPassword} onChange={e => set('dbPassword', e.target.value)} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', paddingRight: 64 }} />
+                  <button onClick={() => set('dbPassword', genPw(32))} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700 }}>Regen</button>
                 </div>
-                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Auto-generated. Save this — it's your Postgres password.</p>
+                <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Master key credentials used by PostgREST and Auth.</p>
               </div>
 
               <div>
-                <label className="label">Studio Dashboard Password *</label>
+                <label className="label" style={{ fontWeight: 600 }}>Studio Console Password *</label>
                 <div style={{ position: 'relative' }}>
-                  <input className="input" value={form.dashPassword} onChange={e => set('dashPassword', e.target.value)} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', paddingRight: 72 }} />
-                  <button onClick={() => set('dashPassword', genPw(20))} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 600 }}>Regen</button>
+                  <input className="input" value={form.dashPassword} onChange={e => set('dashPassword', e.target.value)} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', paddingRight: 64 }} />
+                  <button onClick={() => set('dashPassword', genPw(20))} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.7rem', fontWeight: 700 }}>Regen</button>
                 </div>
-                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Login to Studio with user: <strong>supabase</strong></p>
+                <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Access console with user: <strong>supabase</strong></p>
               </div>
 
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="label">Public URL (Optional)</label>
-                <input className="input" value={form.publicUrl} onChange={e => set('publicUrl', e.target.value)} placeholder="http://213.199.34.74:8100  (auto-detected if blank)" />
-                <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Leave blank to use your server IP with auto-allocated port. Use a domain if you have one set up.</p>
+                <label className="label" style={{ fontWeight: 600 }}>External Hostname / IP (Optional)</label>
+                <input className="input" value={form.publicUrl} onChange={e => set('publicUrl', e.target.value)} placeholder="http://213.199.34.74:8000" />
+                <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Leave empty to automatically allocate host server IP. Specify domain if applicable.</p>
               </div>
 
               <div style={{ gridColumn: '1 / -1' }}>
-                <label className="label">SQL Backup / Migrations (Optional)</label>
+                <label className="label" style={{ fontWeight: 600 }}>SQL Seed Schema (Optional)</label>
                 <input type="file" ref={sqlInputRef} accept=".sql,.zip" style={{ display: 'none' }} onChange={e => setSqlFile(e.target.files?.[0] || null)} />
-                <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'var(--color-surface-2)', padding: '12px 16px', borderRadius: 8 }}>
-                  <button className="btn btn-secondary btn-sm" onClick={() => sqlInputRef.current?.click()}><Upload size={14}/> Select .sql or .zip</button>
-                  <span style={{ fontSize: '0.875rem', color: sqlFile ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
-                    {sqlFile ? sqlFile.name : 'No file — start with a fresh database'}
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'rgba(0,0,0,0.15)', padding: '10px 14px', borderRadius: 8, border: '1px dashed var(--color-border)' }}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => sqlInputRef.current?.click()} style={{ gap: 6 }}><Upload size={14}/> Browse .sql</button>
+                  <span style={{ fontSize: '0.82rem', color: sqlFile ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                    {sqlFile ? sqlFile.name : 'Start with a completely empty database'}
                   </span>
                 </div>
-                <p style={{ margin: '6px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Upload a pg_dump `.sql` or a `.zip` with migration files to restore into the new DB on creation.</p>
               </div>
             </div>
 
-            <div style={{ padding: '12px 16px', background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)', borderRadius: 8, fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-              <strong style={{ color: 'var(--color-primary)' }}>What gets deployed:</strong> Full Supabase stack — PostgreSQL, PostgREST, GoTrue Auth, Storage, Realtime, Edge Functions, Supabase Studio. This uses the official Supabase Docker Compose template and takes 3–5 minutes.
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: '1px solid var(--color-border)', paddingTop: 20 }}>
               <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-              <button className="btn btn-primary" onClick={deploy} disabled={!form.name || !form.dbPassword}>🚀 Deploy Full Stack</button>
+              <button className="btn btn-primary" onClick={deploy} disabled={!form.name || !form.dbPassword}>🚀 Deploy Supabase Stack</button>
             </div>
           </>
         ) : (
           <>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               {deploying ? <RefreshCw size={20} className="animate-spin" color="var(--color-primary)" /> : done ? <Check size={20} color="var(--color-success)"/> : <AlertCircle size={20} color="var(--color-danger)"/>}
-              <h2 style={{ margin: 0, fontSize: '1.25rem' }}>
-                {deploying ? 'Deploying Supabase Stack...' : done ? 'Deployment Complete!' : 'Deployment Failed'}
+              <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>
+                {deploying ? 'Deploying Supabase stack container...' : done ? 'Deployment Finished!' : 'Deployment Failed'}
               </h2>
             </div>
             
-            <div ref={terminalRef} className="terminal" style={{ height: 340, overflowY: 'auto', fontSize: '0.8125rem' }}>
+            <div ref={terminalRef} style={{ background: '#070708', border: '1px solid var(--color-border)', borderRadius: 10, padding: 16, height: 360, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.76rem', lineHeight: 1.6, color: '#e4e4e7' }}>
               {lines.map((l, i) => (
                 <div key={i} style={{ 
-                  lineHeight: 1.6,
                   color: l.includes('✓') ? 'var(--color-success)' : 
                          l.includes('✗') || l.includes('Error') ? 'var(--color-danger)' : 
                          l.includes('⚠') ? 'var(--color-warning)' :
-                         l.includes('▶') ? 'var(--color-primary)' : 'var(--color-text)' 
+                         l.includes('▶') ? 'var(--color-primary)' : '#e4e4e7' 
                 }}>{l}</div>
               ))}
-              {deploying && <div style={{ color: 'var(--color-primary)', marginTop: 4 }}>▋</div>}
+              {deploying && <span className="terminal-cursor" style={{ background: 'var(--color-primary)', display: 'inline-block', width: 6, height: 14, marginLeft: 4 }}></span>}
             </div>
 
             {!deploying && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-              {!done && <button className="btn btn-secondary" onClick={() => setStep(1)}>← Back</button>}
-              <button className="btn btn-primary" onClick={() => { if (done) onCreated(); onClose() }}>
-                {done ? '✓ Done' : 'Close'}
-              </button>
-            </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                {!done && <button className="btn btn-secondary" onClick={() => setStep(1)}>← Back</button>}
+                <button className="btn btn-primary" onClick={() => { if (done) onCreated(); onClose() }}>
+                  {done ? '✓ Done' : 'Close'}
+                </button>
+              </div>
             )}
           </>
         )}
@@ -198,379 +191,6 @@ function SupabaseWizard({ onClose, onCreated }) {
     </Overlay>
   )
 }
-
-// ── Full Manage Modal — tabbed project management panel ──────────────────────
-function ManageModal({ project, onClose, onRefresh }) {
-  const [tab, setTab] = useState('overview')
-  const [detail, setDetail] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [logs, setLogs] = useState([])
-  const [logsLoading, setLogsLoading] = useState(false)
-  const [actionBusy, setActionBusy] = useState(null)
-  const [actionMsg, setActionMsg] = useState('')
-  const [migFile, setMigFile] = useState(null)
-  const [selectedMigs, setSelectedMigs] = useState(new Set())
-  const [envPass, setEnvPass] = useState('')
-  const [revealedEnv, setRevealedEnv] = useState(null)
-  const [envError, setEnvError] = useState('')
-  const migRef = useRef(null)
-  const logsRef = useRef(null)
-
-  useEffect(() => {
-    if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight
-  }, [logs])
-
-  useEffect(() => {
-    setLoading(true)
-    api.get(`/api/supabase/${project.id}/detail`)
-      .then(r => setDetail(r.data))
-      .catch(() => setDetail({}))
-      .finally(() => setLoading(false))
-  }, [project.id])
-
-  const fetchLogs = async () => {
-    setLogsLoading(true); setLogs([])
-    const token = localAuth.getToken() || ''
-    const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${project.id}/logs`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
-    const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
-    while (true) {
-      const { done, value } = await reader.read(); if (done) break
-      buf += dec.decode(value, { stream: true })
-      const parts = buf.split('\n'); buf = parts.pop()
-      parts.forEach(l => { if (l.startsWith('data: ')) setLogs(p => [...p, l.slice(6)]) })
-    }
-    setLogsLoading(false)
-  }
-
-  const dockerAction = async (action) => {
-    setActionBusy(action); setActionMsg('')
-    try {
-      if (action === 'down') {
-        const { data } = await api.post(`/api/supabase/${project.id}/down`)
-        setActionMsg('✓ Stack brought down')
-      } else {
-        const { data } = await api.post(`/api/supabase/${project.id}/${action}`)
-        setActionMsg(`✓ ${action} done`)
-      }
-      onRefresh()
-    } catch (e) {
-      setActionMsg(`✗ ${e.response?.data?.error || e.message}`)
-    }
-    setActionBusy(null)
-  }
-
-  const uploadMigration = async (runImmediately = false) => {
-    if (!migFile) return
-    setActionBusy('migrate'); setActionMsg('')
-    try {
-      const token = localAuth.getToken() || ''
-      const body = new FormData(); body.append('migration', migFile)
-      const url = runImmediately ? `/api/supabase/${project.id}/migrate` : `/api/supabase/${project.id}/migrations/upload`
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}${url}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body
-      })
-      const d = await resp.json()
-      if (!resp.ok) throw new Error(d.error)
-      setActionMsg(runImmediately ? '✓ Migration executed' : '✓ Migration uploaded')
-      setMigFile(null)
-      api.get(`/api/supabase/${project.id}/detail`).then(r => setDetail(r.data))
-    } catch (e) { setActionMsg(`✗ ${e.message}`) }
-    setActionBusy(null)
-  }
-
-  const runSelectedMigs = async () => {
-    if (selectedMigs.size === 0) return
-    setActionBusy('migrate'); setActionMsg('')
-    try {
-      const { data } = await api.post(`/api/supabase/${project.id}/migrations/run`, {
-        files: Array.from(selectedMigs)
-      })
-      const fails = data.results.filter(r => !r.success)
-      if (fails.length) setActionMsg(`⚠ ${fails.length} failed. Check console.`)
-      else setActionMsg(`✓ Ran ${data.results.length} files successfully`)
-      setSelectedMigs(new Set())
-    } catch (e) { setActionMsg(`✗ ${e.response?.data?.error || e.message}`) }
-    setActionBusy(null)
-  }
-
-  const revealEnv = async () => {
-    setEnvError('')
-    try {
-      const { data } = await api.post(`/api/supabase/${project.id}/env-reveal`, { password: envPass })
-      setRevealedEnv(data.content)
-    } catch (e) {
-      setEnvError(e.response?.data?.error || e.message)
-    }
-  }
-
-  const TABS = [
-    { id: 'overview', label: 'Containers', icon: Layers },
-    { id: 'migrations', label: 'Migrations', icon: Database },
-    { id: 'env', label: '.env', icon: Settings },
-    { id: 'compose', label: 'docker-compose.yml', icon: FileText },
-    { id: 'functions', label: 'Functions', icon: Code2 },
-    { id: 'logs', label: 'Logs', icon: Terminal },
-    { id: 'controls', label: 'Controls', icon: Activity },
-  ]
-
-  return (
-    <Overlay onClose={onClose}>
-      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 900, maxHeight: '94vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-        {/* Header */}
-        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>⚙ {project.name}</h2>
-            <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>{project.composePath}</p>
-          </div>
-          <button className="btn btn-secondary" onClick={onClose}><X size={16}/></button>
-        </div>
-
-        {/* Tabs */}
-        <div style={{ display: 'flex', gap: 2, padding: '12px 24px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0, overflowX: 'auto' }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); if (t.id === 'logs') fetchLogs() }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', fontSize: '0.8125rem', fontWeight: 500,
-                background: tab === t.id ? 'var(--color-primary)' : 'transparent',
-                color: tab === t.id ? 'white' : 'var(--color-text-muted)',
-                border: 'none', borderRadius: '8px 8px 0 0', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>
-              <t.icon size={13}/>{t.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          {loading ? (
-            <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: 40 }}>Loading…</div>
-          ) : (
-            <>
-              {/* CONTAINERS TAB */}
-              {tab === 'overview' && (
-                <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                    {(detail?.containers || []).length === 0 ? (
-                      <p style={{ color: 'var(--color-text-muted)', gridColumn: '1/-1' }}>No running containers. Start the project first.</p>
-                    ) : detail.containers.map((c, i) => {
-                      const running = (c.State || '').toLowerCase() === 'running'
-                      const healthy = (c.Health || '').toLowerCase() === 'healthy'
-                      return (
-                        <div key={i} className="glass-card" style={{ padding: 14 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{c.Service || c.Name}</span>
-                            <span style={{
-                              fontSize: '0.7rem', padding: '2px 8px', borderRadius: 20,
-                              background: running ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.1)',
-                              color: running ? 'var(--color-success)' : 'var(--color-danger)',
-                            }}>{c.State}{healthy ? ' · healthy' : ''}</span>
-                          </div>
-                          {(c.Publishers || []).filter(p => p.PublishedPort > 0).map((p, j) => (
-                            <div key={j} style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                              :{p.PublishedPort} → :{p.TargetPort}/{p.Protocol}
-                            </div>
-                          ))}
-                        </div>
-                      )
-                    })}
-                  </div>
-                  {(detail?.ports || []).length > 0 && (
-                    <>
-                      <h4 style={{ marginTop: 24, marginBottom: 12, fontSize: '0.875rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Published Ports</h4>
-                      <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
-                        <thead><tr>{['Service','Published','Target','Protocol'].map(h => <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}>{h}</th>)}</tr></thead>
-                        <tbody>{detail.ports.map((p, i) => (
-                          <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{p.container}</td>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)', color: 'var(--color-primary)' }}>{p.published}</td>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{p.target}</td>
-                            <td style={{ padding: '6px 10px', color: 'var(--color-text-muted)' }}>{p.protocol}</td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
-                    </>
-                  )}
-                </div>
-              )}
-
-              {/* MIGRATIONS TAB */}
-              {tab === 'migrations' && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                    <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>Migration Files ({detail?.migrations?.length || 0})</h4>
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      {selectedMigs.size > 0 && (
-                        <button className="btn btn-primary btn-sm" onClick={runSelectedMigs} disabled={!!actionBusy}>
-                          <Play size={13}/> Run Selected ({selectedMigs.size})
-                        </button>
-                      )}
-                      <button className="btn btn-secondary btn-sm" onClick={() => migRef.current?.click()}>
-                        <Upload size={13}/> Upload .sql
-                      </button>
-                    </div>
-                    <input ref={migRef} type="file" accept=".sql,.zip" hidden onChange={e => setMigFile(e.target.files[0])}/>
-                  </div>
-                  {migFile && (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, padding: '8px 12px', background: 'rgba(59,130,246,0.08)', borderRadius: 8, border: '1px solid rgba(59,130,246,0.2)' }}>
-                      <FileText size={14} color="var(--color-primary)"/>
-                      <span style={{ flex: 1, fontSize: '0.8rem' }}>{migFile.name}</span>
-                      <button className="btn btn-secondary btn-sm" onClick={() => uploadMigration(false)} disabled={!!actionBusy}>
-                        Store
-                      </button>
-                      <button className="btn btn-primary btn-sm" onClick={() => uploadMigration(true)} disabled={!!actionBusy}>
-                        Run Now
-                      </button>
-                    </div>
-                  )}
-                  {(detail?.migrations?.length === 0) ? (
-                    <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>No migration files found in {project.composePath}/migrations/</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {detail.migrations.map((m, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--color-surface-2)', borderRadius: 6 }}>
-                          <input type="checkbox" checked={selectedMigs.has(m.name)} 
-                            onChange={() => {
-                              const s = new Set(selectedMigs)
-                              if (s.has(m.name)) s.delete(m.name)
-                              else s.add(m.name)
-                              setSelectedMigs(s)
-                            }} />
-                          <FileText size={14} color="var(--color-text-muted)"/>
-                          <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{m.name}</span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{(m.size / 1024).toFixed(1)} KB</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* ENV TAB */}
-              {tab === 'env' && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>.env {!revealedEnv && <span style={{ fontSize: '0.75rem', fontWeight: 400, color: 'var(--color-text-muted)' }}>(sensitive values redacted)</span>}</h4>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {!revealedEnv && (
-                        <>
-                          <input type="password" placeholder="Admin Password" value={envPass} onChange={e => setEnvPass(e.target.value)} className="input" style={{ width: 140, padding: '4px 8px', fontSize: '0.75rem' }} />
-                          <button className="btn btn-secondary btn-sm" onClick={revealEnv}><Eye size={13}/> Reveal</button>
-                        </>
-                      )}
-                      {revealedEnv && <button className="btn btn-secondary btn-sm" onClick={() => { setRevealedEnv(null); setEnvPass('') }}><EyeOff size={13}/> Hide</button>}
-                    </div>
-                  </div>
-                  {envError && <div style={{ marginBottom: 12, color: 'var(--color-danger)', fontSize: '0.8rem' }}>{envError}</div>}
-                  <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowY: 'auto', maxHeight: 500, color: 'var(--color-text)' }}>
-                    {revealedEnv || detail?.envContent || 'No .env found'}
-                  </pre>
-                </div>
-              )}
-
-              {/* COMPOSE TAB */}
-              {tab === 'compose' && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>docker-compose.yml</h4>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{project.composePath}/docker-compose.yml</span>
-                  </div>
-                  <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', overflowY: 'auto', maxHeight: 520, color: 'var(--color-text)' }}>
-                    {detail?.composeContent || 'docker-compose.yml not found'}
-                  </pre>
-                </div>
-              )}
-
-              {/* FUNCTIONS TAB */}
-              {tab === 'functions' && (
-                <div>
-                  <h4 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600 }}>Edge Functions</h4>
-                  {(detail?.functions?.length === 0) ? (
-                    <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem' }}>No edge functions found in {project.composePath}/functions/</p>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {detail.functions.map((fn, i) => (
-                        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--color-surface-2)', borderRadius: 8 }}>
-                          <Code2 size={14} color="var(--color-primary)"/>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem' }}>{fn}</span>
-                          <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Edge Function</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* LOGS TAB */}
-              {tab === 'logs' && (
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                    <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>Container Logs</h4>
-                    <button className="btn btn-secondary btn-sm" onClick={fetchLogs} disabled={logsLoading}>
-                      <RefreshCw size={13}/> {logsLoading ? 'Loading…' : 'Refresh'}
-                    </button>
-                  </div>
-                  <div ref={logsRef} style={{ background: '#0d0d0d', borderRadius: 8, padding: 12, height: 450, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', lineHeight: 1.5 }}>
-                    {logs.length === 0 ? (
-                      <span style={{ color: '#666' }}>{logsLoading ? 'Loading logs…' : 'No logs. Click Refresh.'}</span>
-                    ) : logs.map((l, i) => (
-                      <div key={i} style={{ color: l.includes('error') || l.includes('Error') ? '#f87171' : l.includes('warn') ? '#fbbf24' : '#d1d5db' }}>{l}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* CONTROLS TAB */}
-              {tab === 'controls' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div className="glass-card" style={{ padding: 20 }}>
-                    <h4 style={{ margin: '0 0 16px', fontSize: '0.875rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>Docker Stack Controls</h4>
-                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      <button className="btn btn-primary" onClick={() => dockerAction('start')} disabled={!!actionBusy} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Play size={14}/>{actionBusy === 'start' ? 'Starting…' : 'docker compose up -d'}
-                      </button>
-                      <button className="btn btn-secondary" onClick={() => dockerAction('stop')} disabled={!!actionBusy} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <Square size={14}/>{actionBusy === 'stop' ? 'Stopping…' : 'docker compose stop'}
-                      </button>
-                      <button className="btn btn-secondary" onClick={() => dockerAction('restart')} disabled={!!actionBusy} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <RotateCcw size={14}/>{actionBusy === 'restart' ? 'Restarting…' : 'docker compose restart'}
-                      </button>
-                      <button className="btn btn-secondary" onClick={() => dockerAction('down')} disabled={!!actionBusy}
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, borderColor: 'rgba(239,68,68,0.3)', color: 'var(--color-danger)' }}>
-                        <ArrowDown size={14}/>{actionBusy === 'down' ? 'Bringing down…' : 'docker compose down'}
-                      </button>
-                    </div>
-                    {actionMsg && (
-                      <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', fontFamily: 'var(--font-mono)',
-                        background: actionMsg.startsWith('✓') ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-                        color: actionMsg.startsWith('✓') ? 'var(--color-success)' : 'var(--color-danger)',
-                        border: `1px solid ${actionMsg.startsWith('✓') ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
-                      }}>{actionMsg}</div>
-                    )}
-                  </div>
-
-                  <div className="glass-card" style={{ padding: 20 }}>
-                    <h4 style={{ margin: '0 0 12px', fontSize: '0.875rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>Project Info</h4>
-                    {[['Path', project.composePath], ['API URL', project.apiUrl], ['Studio', project.studioUrl], ['DB Port', project.dbPort], ['Status', project.status]]
-                      .map(([label, val]) => (
-                        <div key={label} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: '1px solid var(--color-border)', fontSize: '0.8125rem' }}>
-                          <span style={{ width: 90, color: 'var(--color-text-muted)', flexShrink: 0 }}>{label}</span>
-                          <span style={{ fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>{val}</span>
-                        </div>
-                      ))
-                    }
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </Overlay>
-  )
-}
-
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
@@ -606,10 +226,20 @@ function CopyButton({ text }) {
   return (
     <button
       onClick={copy}
-      style={{ background: 'none', border: 'none', cursor: 'pointer', color: copied ? 'var(--color-success)' : failed ? 'var(--color-danger)' : 'var(--color-text-muted)', padding: '2px 4px' }}
+      style={{
+        background: 'none',
+        border: 'none',
+        cursor: 'pointer',
+        color: copied ? 'var(--color-success)' : failed ? 'var(--color-danger)' : 'var(--color-text-muted)',
+        padding: '2px 4px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 2
+      }}
       title={failed ? 'Copy failed' : copied ? 'Copied' : 'Copy'}
     >
-      {copied ? <Check size={13} /> : <Copy size={13} />}
+      {copied ? <Check size={12} /> : <Copy size={12} />}
     </button>
   )
 }
@@ -663,40 +293,40 @@ VITE_SUPABASE_ANON_KEY=${project.anonKey || ''}
 
   return (
     <Overlay onClose={onClose}>
-      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 820, maxHeight: '92vh', overflowY: 'auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 820, maxHeight: '92vh', overflowY: 'auto', padding: 32, display: 'flex', flexDirection: 'column', gap: 20, border: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>{project.name} Proxy Config</h2>
-            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Generate nginx reverse-proxy blocks and client env values for this project.</p>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Proxy Parameters Setup</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Configure reverse proxies and public variables for client integration.</p>
           </div>
-          <button className="btn btn-secondary" onClick={onClose}><X size={16}/></button>
+          <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ padding: 6, height: 28, width: 28 }}><X size={15}/></button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
           <div>
-            <label className="label">API Domain</label>
+            <label className="label" style={{ fontWeight: 600 }}>Gateway API Domain</label>
             <input className="input" value={apiDomain} onChange={e => setApiDomain(e.target.value.trim())} />
           </div>
           <div>
-            <label className="label">Studio Domain</label>
+            <label className="label" style={{ fontWeight: 600 }}>Dashboard Studio Domain</label>
             <input className="input" value={studioDomain} onChange={e => setStudioDomain(e.target.value.trim())} />
           </div>
         </div>
 
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>nginx server blocks</h3>
+            <h3 style={{ margin: 0, fontSize: '0.86rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Nginx config lines</h3>
             <CopyButton text={config} />
           </div>
-          <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.55 }}>{config}</pre>
+          <pre style={{ margin: 0, padding: 16, background: '#070708', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: '#22c55e', lineHeight: 1.55 }}>{config}</pre>
         </div>
 
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>Frontend client env</h3>
+            <h3 style={{ margin: 0, fontSize: '0.86rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Client config environment</h3>
             <CopyButton text={clientEnv} />
           </div>
-          <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.55 }}>{clientEnv}</pre>
+          <pre style={{ margin: 0, padding: 16, background: '#070708', border: '1px solid var(--color-border)', borderRadius: 8, fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: '#a855f7', lineHeight: 1.55 }}>{clientEnv}</pre>
         </div>
       </div>
     </Overlay>
@@ -723,32 +353,33 @@ function RegisterModal({ onClose, onRegistered }) {
 
   return (
     <Overlay onClose={onClose}>
-      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 520, padding: 32, display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 540, padding: '32px 36px', display: 'flex', flexDirection: 'column', gap: 20, border: '1px solid rgba(255,255,255,0.06)' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>Register Existing Project</h2>
-            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Import an existing Supabase install into the managed list</p>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Import Existing Stack</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Integrate a pre-existing Dockerized Supabase stack into your control panel.</p>
           </div>
-          <button className="btn btn-secondary" onClick={onClose}><X size={16}/></button>
+          <button className="btn btn-secondary btn-sm" onClick={onClose} style={{ padding: 6, height: 28, width: 28 }}><X size={15}/></button>
         </div>
 
         <div>
-          <label className="label">Project Name *</label>
+          <label className="label" style={{ fontWeight: 600 }}>Project Name *</label>
           <input className="input" value={name} onChange={e => setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))} placeholder="print-lanka" />
         </div>
 
         <div>
-          <label className="label">Docker Compose Directory *</label>
+          <label className="label" style={{ fontWeight: 600 }}>Absolute Compose Path *</label>
           <input className="input" value={composePath} onChange={e => setComposePath(e.target.value)} placeholder="/root/print_lankaDB" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }} />
-          <p style={{ margin: '4px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Must contain a <code>.env</code> and <code>docker-compose.yml</code>. Credentials will be read from <code>.env</code>.</p>
+          <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Must contain compose blueprint `docker-compose.yml` and environment parameters.</p>
         </div>
 
-        {error && <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</div>}
+        {error && <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: 8, color: 'var(--color-danger)', fontSize: '0.82rem' }}>{error}</div>}
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: '1px solid var(--color-border)', paddingTop: 16 }}>
           <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" onClick={register} disabled={!composePath || !name || busy}>
-            <FolderOpen size={14} />{busy ? 'Registering…' : 'Register Project'}
+          <button className="btn btn-primary" onClick={register} disabled={!composePath || !name || busy} style={{ gap: 6 }}>
+            {busy ? <RefreshCw size={14} className="animate-spin"/> : <FolderOpen size={14} />}
+            Import Project
           </button>
         </div>
       </div>
@@ -766,8 +397,11 @@ export default function SupabasePage() {
   const [tab, setTab] = useState('projects') // projects | ports
   const [selectedProjects, setSelectedProjects] = useState(new Set())
   const [proxyProject, setProxyProject] = useState(null)
+  
+  const navigate = useNavigate()
 
   const load = useCallback(async () => {
+    setLoading(true)
     const [pr, po] = await Promise.allSettled([
       api.get('/api/supabase/projects'),
       api.get('/api/ports'),
@@ -780,7 +414,7 @@ export default function SupabasePage() {
   useEffect(() => { load() }, [load])
 
   const doAction = async (id, action) => {
-    if (action === 'remove' && !confirm('Delete this Supabase project and all data? This cannot be undone.')) return
+    if (action === 'remove' && !confirm('Are you absolutely sure you want to delete this Supabase project stack? All stored databases and volumes will be permanently wiped.')) return
     try {
       if (action === 'remove') await api.delete(`/api/supabase/${id}`)
       else await api.post(`/api/supabase/${id}/${action}`)
@@ -790,7 +424,7 @@ export default function SupabasePage() {
 
   const doBulkAction = async (action) => {
     if (selectedProjects.size === 0) return
-    if (action === 'remove' && !confirm(`Delete ${selectedProjects.size} projects and all data? This cannot be undone.`)) return
+    if (action === 'remove' && !confirm(`Are you absolutely sure you want to delete the ${selectedProjects.size} selected projects? This action cannot be reversed.`)) return
     try {
       const promises = Array.from(selectedProjects).map(id => {
         if (action === 'remove') return api.delete(`/api/supabase/${id}`)
@@ -823,25 +457,19 @@ export default function SupabasePage() {
       const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/backup`, {
         headers: { Authorization: `Bearer ${token}` }
       })
-      if (!resp.ok) throw new Error('Backup failed')
+      if (!resp.ok) throw new Error('Dump script executed with errors')
       const blob = await resp.blob()
       const url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${name}-backup-${Date.now()}.sql`
+      a.download = `${name}-postgres-backup-${Date.now()}.sql`
       document.body.appendChild(a)
       a.click()
       window.URL.revokeObjectURL(url)
     } catch (e) {
-      alert(e.message)
+      alert(`Backup failed: ${e.message}`)
     }
   }
-
-  const dbPorts = ports.filter(p => p.process?.includes('docker') || p.process?.includes('postgres') || [5432, 55432, 65432, 6543].includes(p.port))
-  const webPorts = ports.filter(p => p.process?.includes('nginx') || p.process?.includes('node') || p.process?.includes('docker-proxy'))
-
-  const navigate = useNavigate()
-  const [manageProject, setManageProject] = useState(null) // kept for backward compat but unused
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -849,172 +477,243 @@ export default function SupabasePage() {
       {showRegister && <RegisterModal onClose={() => setShowRegister(false)} onRegistered={() => { load() }} />}
       {proxyProject && <ProxyModal project={proxyProject} onClose={() => setProxyProject(null)} />}
 
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+      {/* Title Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 14 }}>
         <div>
-          <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, letterSpacing: '-0.02em' }}>Supabase & Databases</h1>
-          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>Manage self-hosted Supabase instances and monitor ports</p>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 800, margin: 0, letterSpacing: '-0.02em' }}>Supabase & Databases</h1>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>Monitor system ports and coordinate self-hosted Supabase containers stack.</p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn btn-secondary btn-sm" onClick={load}><RefreshCw size={13} /></button>
-          <button className="btn btn-secondary" onClick={() => setShowRegister(true)}><FolderOpen size={15} /> Register Existing</button>
-          <button className="btn btn-primary" onClick={() => setShowNew(true)}><Plus size={15} /> New Project</button>
+          <button className="btn btn-secondary" onClick={load} disabled={loading} style={{ padding: '0 12px', height: 36 }}>
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          </button>
+          <button className="btn btn-secondary" onClick={() => setShowRegister(true)} style={{ height: 36, gap: 6 }}>
+            <FolderOpen size={14} /> Import Existing
+          </button>
+          <button className="btn btn-primary" onClick={() => setShowNew(true)} style={{ height: 36, gap: 6 }}>
+            <Plus size={15} /> Create Supabase Project
+          </button>
         </div>
       </div>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: 4, background: 'var(--color-surface-3)', padding: 4, borderRadius: 10, width: 'fit-content' }}>
         {['projects', 'ports'].map(t => (
-          <button key={t} onClick={() => setTab(t)} style={{ padding: '6px 18px', borderRadius: 8, border: 'none', cursor: 'pointer', background: tab === t ? 'var(--color-surface-2)' : 'transparent', color: tab === t ? 'var(--color-text)' : 'var(--color-text-muted)', fontWeight: tab === t ? 600 : 400, fontSize: '0.875rem', textTransform: 'capitalize' }}>
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            style={{
+              padding: '6px 18px',
+              borderRadius: 8,
+              border: 'none',
+              cursor: 'pointer',
+              background: tab === t ? 'var(--color-surface-2)' : 'transparent',
+              color: tab === t ? 'var(--color-text)' : 'var(--color-text-muted)',
+              fontWeight: tab === t ? 700 : 400,
+              fontSize: '0.84rem',
+              textTransform: 'capitalize',
+              transition: 'all 0.15s'
+            }}
+          >
             {t}
           </button>
         ))}
       </div>
 
+      {/* Bulk Action Controls */}
       {tab === 'projects' && selectedProjects.size > 0 && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px', background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
-          <span style={{ fontSize: '0.875rem', fontWeight: 600 }}>{selectedProjects.size} selected</span>
+        <div className="glass-card animate-fade-in" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 18px', background: 'rgba(59,130,246,0.03)', border: '1px solid rgba(59,130,246,0.15)' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-primary)' }}>{selectedProjects.size} stacks selected</span>
           <div style={{ display: 'flex', gap: 8, marginLeft: 'auto' }}>
-            <button className="btn btn-success btn-sm" onClick={() => doBulkAction('start')}><Play size={12} /> Start</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => doBulkAction('stop')}><Square size={12} /> Stop</button>
-            <button className="btn btn-secondary btn-sm" onClick={() => doBulkAction('restart')}><RotateCcw size={12} /> Restart</button>
-            <button className="btn btn-danger btn-sm" onClick={() => doBulkAction('remove')}><Trash2 size={12} /> Delete</button>
+            <button className="btn btn-primary btn-sm" onClick={() => doBulkAction('start')} style={{ gap: 4 }}><Play size={12} /> Start</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => doBulkAction('stop')} style={{ gap: 4 }}><Square size={12} /> Stop</button>
+            <button className="btn btn-secondary btn-sm" onClick={() => doBulkAction('restart')} style={{ gap: 4 }}><RotateCcw size={12} /> Restart</button>
+            <button className="btn btn-danger btn-sm" onClick={() => doBulkAction('remove')} style={{ gap: 4 }}><Trash2 size={12} /> Delete</button>
           </div>
         </div>
       )}
 
+      {/* Projects Grid Dashboard */}
       {tab === 'projects' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {loading ? <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div> :
-            projects.length === 0 ? (
-              <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
-                <Database size={36} style={{ margin: '0 auto 16px', opacity: 0.4 }} />
-                <p style={{ marginBottom: 16 }}>No Supabase projects found</p>
-                <button className="btn btn-primary" onClick={() => setShowNew(true)}><Plus size={14} /> Create First Project</button>
-              </div>
-            ) :
-            projects.map(p => {
-              const isRunning = p.status === 'running'
-              return (
-              <div key={p.id} className="glass-card" style={{ padding: 20 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 12 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                      <input type="checkbox" checked={selectedProjects.has(p.id)} onChange={() => toggleSelect(p.id)} style={{ cursor: 'pointer' }} />
-                      <Database size={18} color="var(--color-primary)" />
-                      <span style={{ fontWeight: 700, fontSize: '1.0625rem' }}>{p.name}</span>
-                      <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: p.status === 'running' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: p.status === 'running' ? 'var(--color-success)' : 'var(--color-danger)', fontWeight: 600 }}>
-                        ● {p.status}
-                      </span>
-                      {p.builtin && <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', background: 'var(--color-surface-3)', padding: '2px 8px', borderRadius: 4 }}>auto-detected</span>}
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: '0.8125rem', maxWidth: 600 }}>
-                      <span style={{ color: 'var(--color-text-muted)' }}>API URL</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <a href={p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.apiUrl}</a>
-                        <CopyButton text={p.apiUrl} />
-                        <button className="btn btn-secondary btn-sm" onClick={() => setProxyProject(p)} style={{ padding: '2px 8px', fontSize: '0.72rem' }}>
-                          <Network size={11} /> Proxy
-                        </button>
-                      </div>
-
-                      <span style={{ color: 'var(--color-text-muted)' }}>Anon Key</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
-                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', color: 'var(--color-text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {p.anonKey ? `${p.anonKey.slice(0, 24)}…${p.anonKey.slice(-10)}` : '—'}
-                        </code>
-                        {p.anonKey && <CopyButton text={p.anonKey} />}
-                      </div>
-
-                      {(p.builtin || p.studioUrl) && (
-                        <>
-                          <span style={{ color: 'var(--color-text-muted)' }}>Studio</span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <a href={p.studioUrl || p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.studioUrl || p.apiUrl}</a>
-                            <CopyButton text={p.studioUrl || p.apiUrl} />
+          {loading ? (
+            <div style={{ padding: 60, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              <RefreshCw size={24} className="animate-spin" style={{ margin: '0 auto 12px' }} />
+              <div>Fetching stack registries...</div>
+            </div>
+          ) : projects.length === 0 ? (
+            <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+              <Database size={40} style={{ margin: '0 auto 16px', opacity: 0.3 }} />
+              <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--color-text)' }}>No Database Stacks Found</h3>
+              <p style={{ fontSize: '0.875rem', marginTop: 6, marginBottom: 20 }}>
+                Deploy your first self-hosted Supabase stack or connect existing Compose files.
+              </p>
+              <button className="btn btn-primary" onClick={() => setShowNew(true)} style={{ gap: 6 }}><Plus size={15} /> Deploy First Project</button>
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(440px, 1fr))', gap: 16 }}>
+              {projects.map(p => {
+                const isRunning = p.status === 'running'
+                const showConnField = showConn[p.id]
+                
+                return (
+                  <div key={p.id} className="glass-card hover-glow" style={{ padding: 22, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 16 }}>
+                    
+                    <div>
+                      {/* Card Header Row */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <input
+                            type="checkbox"
+                            checked={selectedProjects.has(p.id)}
+                            onChange={() => toggleSelect(p.id)}
+                            style={{ cursor: 'pointer', width: 15, height: 15 }}
+                          />
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <div style={{ width: 28, height: 28, borderRadius: 6, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                              <Database size={14} color="#10b981" />
+                            </div>
+                            <span style={{ fontWeight: 800, fontSize: '1.05rem', color: 'var(--color-text)' }}>{p.name}</span>
                           </div>
-                        </>
-                      )}
+                        </div>
 
-                      <span style={{ color: 'var(--color-text-muted)' }}>DB Connection</span>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <code style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8125rem', color: 'var(--color-text-dim)', filter: showConn[p.id] ? 'none' : 'blur(5px)', cursor: 'pointer', transition: 'filter 0.2s' }}
-                          onClick={() => setShowConn(s => ({ ...s, [p.id]: !s[p.id] }))}>
-                          {p.dbConn}
-                        </code>
-                        <button onClick={() => setShowConn(s => ({ ...s, [p.id]: !s[p.id] }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', padding: '2px 4px' }}>
-                          {showConn[p.id] ? <EyeOff size={13} /> : <Eye size={13} />}
-                        </button>
-                        {showConn[p.id] && <CopyButton text={p.dbConn} />}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          {p.builtin && (
+                            <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--color-text-muted)', background: 'var(--color-surface-3)', padding: '2px 8px', borderRadius: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                              Imported
+                            </span>
+                          )}
+                          <span className={`badge ${isRunning ? 'badge-green' : 'badge-red'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', fontSize: '0.68rem', fontWeight: 700 }}>
+                            <span className={`status-dot ${isRunning ? 'active' : ''}`} style={{ width: 5, height: 5, borderRadius: '50%', background: isRunning ? 'var(--color-success)' : 'var(--color-danger)' }}></span>
+                            {p.status}
+                          </span>
+                        </div>
                       </div>
 
-                      <span style={{ color: 'var(--color-text-muted)' }}>Dash Auth</span>
-                      <span style={{ color: 'var(--color-text-dim)', fontFamily: 'var(--font-mono)' }}>{p.dashboardUser} / {p.dashboardPass}</span>
+                      {/* Info Spec Grid */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.8rem', background: 'rgba(0,0,0,0.12)', borderRadius: 8, padding: '12px 14px', border: '1px solid var(--color-border)' }}>
+                        
+                        <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center' }}>
+                          <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>API Endpoint</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                            <a href={p.apiUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textDecoration: 'none' }}>
+                              {p.apiUrl}
+                            </a>
+                            <CopyButton text={p.apiUrl} />
+                            <button className="btn btn-secondary btn-sm" onClick={() => setProxyProject(p)} style={{ height: 20, padding: '0 6px', fontSize: '0.68rem', display: 'flex', alignItems: 'center', gap: 4 }}>
+                              <Network size={10} /> Proxy
+                            </button>
+                          </div>
+                        </div>
 
-                      <span style={{ color: 'var(--color-text-muted)' }}>Created</span>
-                      <span style={{ color: 'var(--color-text-dim)' }}>{new Date(p.created).toLocaleDateString()}</span>
+                        {(p.builtin || p.studioUrl) && (
+                          <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center' }}>
+                            <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>Studio URL</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                              <a href={p.studioUrl || p.apiUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', textDecoration: 'none' }}>
+                                {p.studioUrl || p.apiUrl}
+                              </a>
+                              <CopyButton text={p.studioUrl || p.apiUrl} />
+                            </div>
+                          </div>
+                        )}
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center' }}>
+                          <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>Postgres DB</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                            <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)', filter: showConnField ? 'none' : 'blur(5px)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                              {p.dbConn}
+                            </code>
+                            <button onClick={() => setShowConn(s => ({ ...s, [p.id]: !s[p.id] }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)', display: 'inline-flex' }}>
+                              {showConnField ? <EyeOff size={12} /> : <Eye size={12} />}
+                            </button>
+                            {showConnField && <CopyButton text={p.dbConn} />}
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '80px 1fr', alignItems: 'center' }}>
+                          <span style={{ color: 'var(--color-text-muted)', fontWeight: 600 }}>Studio Auth</span>
+                          <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-dim)' }}>
+                            {p.dashboardUser} / {p.dashboardPass}
+                          </span>
+                        </div>
+                      </div>
+
                     </div>
-                  </div>
 
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {!p.builtin && (
-                      <>
-                        <button className="btn btn-success btn-sm" onClick={() => doAction(p.id, 'start')} disabled={isRunning}><Play size={12} /> Start</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'stop')} disabled={!isRunning}><Square size={12} /> Stop</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'restart')} disabled={!isRunning}><RotateCcw size={12} /> Restart</button>
-                        <button className="btn btn-secondary btn-sm" onClick={() => navigate(`/supabase/project/${p.id}`)}><Server size={12} /> Manage</button>
-                        <button className="btn btn-danger btn-sm" onClick={() => doAction(p.id, 'remove')}><Trash2 size={12} /> Delete</button>
-                      </>
-                    )}
-                    <button className="btn btn-secondary btn-sm" onClick={() => backup(p.id, p.name)}><Download size={12} /> Backup</button>
+                    {/* Quick Row Actions */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--color-border)', paddingTop: 12, marginTop: 4 }}>
+                      <span style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>
+                        Created {new Date(p.created).toLocaleDateString()}
+                      </span>
+                      
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {!p.builtin && (
+                          <>
+                            <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'start')} disabled={isRunning} title="Start compose container" style={{ padding: 6, width: 28, height: 28 }}><Play size={12}/></button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'stop')} disabled={!isRunning} title="Stop container services" style={{ padding: 6, width: 28, height: 28 }}><Square size={12}/></button>
+                            <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'restart')} disabled={!isRunning} title="Restart services" style={{ padding: 6, width: 28, height: 28 }}><RotateCcw size={12}/></button>
+                          </>
+                        )}
+                        <button className="btn btn-secondary btn-sm" onClick={() => backup(p.id, p.name)} title="Execute DB dump SQL download" style={{ padding: 6, width: 28, height: 28 }}><Download size={12}/></button>
+                        
+                        <button className="btn btn-primary btn-sm" onClick={() => navigate(`/supabase/project/${p.id}`)} style={{ gap: 4, padding: '0 10px', height: 28, fontSize: '0.76rem' }}>
+                          <Settings size={12} /> Manage
+                        </button>
+                        
+                        {!p.builtin && (
+                          <button className="btn btn-secondary btn-sm" onClick={() => doAction(p.id, 'remove')} title="Wipe stack configurations" style={{ padding: 6, width: 28, height: 28, color: 'var(--color-danger)', borderColor: 'rgba(239,68,68,0.1)' }}><Trash2 size={12}/></button>
+                        )}
+                      </div>
+                    </div>
+
                   </div>
-                </div>
-              </div>
-              )
-            })
-          }
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
+      {/* Network Ports Tab */}
       {tab === 'ports' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Summary cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+          {/* Summary Metric Cards */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
             {[
-              { label: 'Total Listening', value: ports.length, color: 'var(--color-primary)' },
-              { label: 'Publicly Exposed', value: ports.filter(p => p.public).length, color: 'var(--color-warning)' },
-              { label: 'Localhost Only', value: ports.filter(p => !p.public).length, color: 'var(--color-success)' },
-              { label: 'Docker Ports', value: ports.filter(p => p.process?.includes('docker')).length, color: '#06b6d4' },
+              { label: 'Total active ports', value: ports.length, color: 'var(--color-primary)' },
+              { label: 'Public IP binds', value: ports.filter(p => p.public).length, color: 'var(--color-warning)' },
+              { label: 'Secure localhost binds', value: ports.filter(p => !p.public).length, color: 'var(--color-success)' },
+              { label: 'Docker networks', value: ports.filter(p => String(p.process || '').toLowerCase().includes('docker')).length, color: '#06b6d4' },
             ].map(c => (
-              <div key={c.label} className="glass-card" style={{ padding: '16px 18px', textAlign: 'center' }}>
-                <div style={{ fontSize: '1.5rem', fontWeight: 800, color: c.color }}>{c.value}</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>{c.label}</div>
+              <div key={c.label} className="glass-card" style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div style={{ fontSize: '1.75rem', fontWeight: 800, color: c.color, lineHeight: 1.1 }}>{c.value}</div>
+                <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)', marginTop: 4, fontWeight: 500 }}>{c.label}</div>
               </div>
             ))}
           </div>
 
           <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-border)', fontSize: '0.875rem', fontWeight: 600 }}>All Listening Ports</div>
+            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border)', fontSize: '0.88rem', fontWeight: 800 }}>Listening Port Allocations</div>
             <div style={{ overflowX: 'auto' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
                 <thead>
-                  <tr>
-                    {['Port', 'Process', 'PID', 'Address', 'Visibility'].map(h => (
-                      <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 600, borderBottom: '1px solid var(--color-border)' }}>{h}</th>
+                  <tr style={{ borderBottom: '1px solid var(--color-border)', background: 'rgba(255,255,255,0.01)' }}>
+                    {['Exposed Port', 'Service/Process', 'Process ID', 'Bind Address', 'Exposed Status'].map(h => (
+                      <th key={h} style={{ padding: '12px 18px', textAlign: 'left', fontSize: '0.72rem', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {ports.map((p, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                      <td style={{ padding: '8px 16px', fontFamily: 'var(--font-mono)', fontWeight: 600, color: 'var(--color-primary)' }}>{p.port}</td>
-                      <td style={{ padding: '8px 16px', fontSize: '0.875rem' }}>{p.process}</td>
-                      <td style={{ padding: '8px 16px', fontSize: '0.8125rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{p.pid}</td>
-                      <td style={{ padding: '8px 16px', fontSize: '0.8125rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)' }}>{p.address}</td>
-                      <td style={{ padding: '8px 16px' }}>
-                        <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: p.public ? 'rgba(245,158,11,0.1)' : 'rgba(16,185,129,0.1)', color: p.public ? 'var(--color-warning)' : 'var(--color-success)', fontWeight: 600 }}>
-                          {p.public ? '🌐 Public' : '🔒 Local'}
+                    <tr key={i} style={{ borderBottom: i < ports.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                      <td style={{ padding: '12px 18px', fontFamily: 'var(--font-mono)', fontWeight: 700, color: 'var(--color-primary)', fontSize: '0.86rem' }}>:{p.port}</td>
+                      <td style={{ padding: '12px 18px', fontWeight: 600 }}>{p.process}</td>
+                      <td style={{ padding: '12px 18px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>{p.pid}</td>
+                      <td style={{ padding: '12px 18px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)' }}>{p.address}</td>
+                      <td style={{ padding: '12px 18px' }}>
+                        <span className={`badge ${p.public ? 'badge-yellow' : 'badge-green'}`} style={{ fontSize: '0.7rem', padding: '2px 8px', fontWeight: 700 }}>
+                          {p.public ? '🌐 PUBLIC ACCESS' : '🔒 PRIVATE LOCAL'}
                         </span>
                       </td>
                     </tr>
