@@ -662,13 +662,23 @@ export default function WebsitesPage() {
 
               {/* Manage Action */}
               <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
-                <button 
-                  className="btn btn-secondary btn-sm" 
-                  style={{ flex: 1 }} 
-                  onClick={() => navigate(`/websites/manage/${site.id}`)}
-                >
-                  <Wrench size={13} /> Manage Site
-                </button>
+                {site.isSystemPanel ? (
+                  <button 
+                    className="btn btn-secondary btn-sm" 
+                    style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }} 
+                    onClick={() => navigate(`/websites/manage/${site.id}`)}
+                  >
+                    <Lock size={13} /> View System Config
+                  </button>
+                ) : (
+                  <button 
+                    className="btn btn-secondary btn-sm" 
+                    style={{ flex: 1 }} 
+                    onClick={() => navigate(`/websites/manage/${site.id}`)}
+                  >
+                    <Wrench size={13} /> Manage Site
+                  </button>
+                )}
                 <button 
                   className="btn btn-secondary btn-icon btn-sm"
                   onClick={() => downloadSiteBackup(site.id, site.domain)}

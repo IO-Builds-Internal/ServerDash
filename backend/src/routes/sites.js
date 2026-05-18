@@ -272,7 +272,12 @@ function parseNginxConfig(content, filename) {
     }
   }
 
-  const primaryDomain = serverName[0] || filename
+  let primaryDomain = serverName[0] || filename
+  const isSystemPanel = filename === 'serverdash' || primaryDomain === '_' || root === '/var/www/serverdash/dist'
+  if (primaryDomain === '_') {
+    primaryDomain = 'ServerDash Dashboard (Default/Catch-all)'
+  }
+
   return {
     id: filename.replace(/[^a-z0-9]/gi, '-'),
     domain: primaryDomain,
@@ -286,6 +291,7 @@ function parseNginxConfig(content, filename) {
     configFile: `/etc/nginx/sites-enabled/${filename}`,
     gitRepo: null,
     lastDeployed: null,
+    isSystemPanel
   }
 }
 
@@ -523,6 +529,9 @@ router.post('/:id/config', async (req, res) => {
     const sites = await getNginxSites()
     const site = sites.find(s => s.id === req.params.id)
     if (!site || !site.configFile) return res.status(404).json({ error: 'Config not found' })
+    if (site.isSystemPanel) {
+      return res.status(403).json({ error: 'Catastrophic Lockout Blocked: Modifying the active ServerDash dashboard host proxy is read-only.' })
+    }
     const realPath = fs.realpathSync(site.configFile)
     const oldContent = fs.readFileSync(realPath, 'utf8')
     fs.writeFileSync(realPath, content, 'utf8')
@@ -895,6 +904,10 @@ router.delete('/:id', async (req, res) => {
   try {
     const sites = await getNginxSites()
     let site = sites.find(s => s.id === id)
+
+    if (id === 'serverdash' || site?.isSystemPanel || site?.domain?.includes('ServerDash') || site?.configFile?.includes('serverdash')) {
+      return res.status(403).json({ error: 'Catastrophic Lockout Blocked: Deleting the ServerDash panel configuration is strictly forbidden.' })
+    }
 
     // Fallback for no-nginx sites or sites that have already had their nginx config deleted
     if (!site) {

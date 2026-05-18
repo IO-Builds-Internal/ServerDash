@@ -579,9 +579,15 @@ export default function SiteDetailPage() {
           <a href={`${site.ssl ? 'https' : 'http'}://${site.domain}`} target="_blank" rel="noopener noreferrer" className="btn btn-secondary">
             <ExternalLink size={15}/> Visit Live Website
           </a>
-          <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
-            <Trash2 size={15}/> Remove Site
-          </button>
+          {site.isSystemPanel ? (
+            <button className="btn btn-danger" disabled style={{ opacity: 0.5, cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: 6 }} title="System Protected: ServerDash panel protects this host's configuration.">
+              <Lock size={15}/> System Protected
+            </button>
+          ) : (
+            <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
+              <Trash2 size={15}/> Remove Site
+            </button>
+          )}
         </div>
       </div>
 
@@ -590,24 +596,30 @@ export default function SiteDetailPage() {
         <button className={`tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
           Overview
         </button>
-        <button className={`tab ${activeTab === 'deployments' ? 'active' : ''}`} onClick={() => setActiveTab('deployments')}>
-          Deployments {actionBusy && <span style={{ display:'inline-block', width:8, height:8, background:'var(--color-primary)', borderRadius:'50%' }} className="animate-pulse-dot"/>}
-        </button>
-        <button className={`tab ${activeTab === 'build' ? 'active' : ''}`} onClick={() => setActiveTab('build')}>
-          Build & Start Settings
-        </button>
-        <button className={`tab ${activeTab === 'env' ? 'active' : ''}`} onClick={() => setActiveTab('env')}>
-          Environment Variables
-        </button>
-        <button className={`tab ${activeTab === 'git' ? 'active' : ''}`} onClick={() => setActiveTab('git')}>
-          Git Integration
-        </button>
+        {!site.isSystemPanel && (
+          <>
+            <button className={`tab ${activeTab === 'deployments' ? 'active' : ''}`} onClick={() => setActiveTab('deployments')}>
+              Deployments {actionBusy && <span style={{ display:'inline-block', width:8, height:8, background:'var(--color-primary)', borderRadius:'50%' }} className="animate-pulse-dot"/>}
+            </button>
+            <button className={`tab ${activeTab === 'build' ? 'active' : ''}`} onClick={() => setActiveTab('build')}>
+              Build & Start Settings
+            </button>
+            <button className={`tab ${activeTab === 'env' ? 'active' : ''}`} onClick={() => setActiveTab('env')}>
+              Environment Variables
+            </button>
+            <button className={`tab ${activeTab === 'git' ? 'active' : ''}`} onClick={() => setActiveTab('git')}>
+              Git Integration
+            </button>
+          </>
+        )}
         <button className={`tab ${activeTab === 'nginx' ? 'active' : ''}`} onClick={() => setActiveTab('nginx')}>
           Nginx Config
         </button>
-        <button className={`tab ${activeTab === 'mail' ? 'active' : ''}`} onClick={() => setActiveTab('mail')}>
-          Mail & SMTP Settings
-        </button>
+        {!site.isSystemPanel && (
+          <button className={`tab ${activeTab === 'mail' ? 'active' : ''}`} onClick={() => setActiveTab('mail')}>
+            Mail & SMTP Settings
+          </button>
+        )}
       </div>
 
       {/* Dynamic Tab Body */}
@@ -1251,15 +1263,29 @@ export default function SiteDetailPage() {
                   Hot-edit your Nginx virtual host configurations directly. Press Save to automatically test configurations (`nginx -t`) and reload the Nginx daemon safely.
                 </p>
               </div>
-              <button 
-                className="btn btn-primary" 
-                onClick={saveConfig} 
-                disabled={configSaving || configLoading}
-              >
-                {configSaving ? <RefreshCw size={14} className="animate-spin"/> : configSaved ? <Check size={14}/> : <Save size={14}/>}
-                {configSaving ? 'Testing Nginx Config...' : configSaved ? 'Hot-Reload Complete' : 'Save & Hot-Reload'}
-              </button>
+              {site.isSystemPanel ? (
+                <button className="btn btn-secondary btn-sm" disabled style={{ padding: '8px 14px', opacity: 0.5, cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Lock size={14}/> System Protected (Read-Only)
+                </button>
+              ) : (
+                <button 
+                  className="btn btn-primary btn-sm" 
+                  onClick={saveConfig} 
+                  disabled={configSaving} 
+                  style={{ padding: '8px 14px' }}
+                >
+                  {configSaving ? <RefreshCw size={14} className="animate-spin"/> : configSaved ? <Check size={14}/> : <Save size={14}/>}
+                  {configSaving ? 'Testing Nginx Config...' : configSaved ? 'Hot-Reload Complete' : 'Save & Hot-Reload'}
+                </button>
+              )}
             </div>
+
+            {site.isSystemPanel && (
+              <div style={{ padding:14, borderRadius:10, background:'rgba(245,158,11,0.06)', border:'1px solid rgba(245,158,11,0.2)', color:'#f59e0b', fontSize:'0.82rem', display:'flex', gap:8, alignItems:'center' }}>
+                <Lock size={15} />
+                <span><strong>Protected Configuration</strong>: This is the primary Nginx binding configuration for the ServerDash control panel. Edits here are disabled to prevent administrative lockouts.</span>
+              </div>
+            )}
 
             {configError && (
               <div style={{ padding:16, borderRadius:12, background:'rgba(239,68,68,0.08)', border:'1px solid rgba(239,68,68,0.15)', color:'var(--color-danger)', fontSize:'0.85rem', display:'flex', alignItems:'center', gap:8 }}>
@@ -1273,12 +1299,14 @@ export default function SiteDetailPage() {
               ) : (
                 <textarea 
                   value={configContent} 
-                  onChange={e => setConfigContent(e.target.value)} 
+                  onChange={e => !site.isSystemPanel && setConfigContent(e.target.value)} 
+                  readOnly={site.isSystemPanel}
                   placeholder="Enter Nginx virtual host contents..."
                   style={{ 
                     width:'100%', minHeight:420, background:'#030712', color:'#cbd5e1', 
                     border:'none', padding:20, fontFamily:'var(--font-mono)', 
-                    fontSize:'0.8125rem', lineHeight:1.7, outline:'none', resize:'vertical'
+                    fontSize:'0.8125rem', lineHeight:1.7, outline:'none', resize:'vertical',
+                    opacity: site.isSystemPanel ? 0.75 : 1
                   }}
                 />
               )}
