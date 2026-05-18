@@ -271,8 +271,8 @@ export default function SiteDetailPage() {
     }
   }
 
-  const runDeploy = async () => {
-    setActionLogs(['▶ Triggering website deployment...'])
+  const runDeploy = async (commitHash) => {
+    setActionLogs([commitHash ? `▶ Triggering rollback to commit ${commitHash}...` : '▶ Triggering website deployment...'])
     setShowLogs(true)
     setActionBusy(true)
     setActiveTab('deployments')
@@ -281,7 +281,11 @@ export default function SiteDetailPage() {
     try {
       const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/deploy`, { 
         method: 'POST', 
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { 
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ commitHash })
       })
       
       const reader = resp.body.getReader()
@@ -966,6 +970,72 @@ export default function SiteDetailPage() {
                     </button>
                   </div>
                 </div>
+
+                {/* Commit History & Rollback Console */}
+                {gitData.commits && gitData.commits.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 10 }}>
+                    <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10 }}>
+                      <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <RotateCcw size={16} color="var(--color-primary)"/> Git Deployment History & Rollbacks
+                      </h3>
+                      <p style={{ margin: '4px 0 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                        Select a previous commit deployment to immediately roll back / restore your live environment to that state.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {gitData.commits.map((commit, index) => {
+                        const isCurrent = gitData.lastCommit?.hash === commit.hash
+                        return (
+                          <div 
+                            key={commit.hash} 
+                            style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center', 
+                              padding: '12px 16px', 
+                              background: isCurrent ? 'rgba(59, 130, 246, 0.04)' : 'rgba(255, 255, 255, 0.01)', 
+                              border: isCurrent ? '1px solid var(--color-primary-glow)' : '1px solid var(--color-border)', 
+                              borderRadius: 10,
+                              transition: 'all 0.2s'
+                            }}
+                          >
+                            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flex: 1, minWidth: 0 }}>
+                              <GitCommit size={16} style={{ marginTop: 2, color: isCurrent ? 'var(--color-primary)' : 'var(--color-text-muted)', flexShrink: 0 }} />
+                              <div style={{ minWidth: 0, flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '0.85rem', color: isCurrent ? 'var(--color-primary)' : 'var(--color-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                    {commit.subject}
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="badge badge-green" style={{ fontSize: '0.6rem', padding: '1px 6px' }}>Current Active</span>
+                                  )}
+                                </div>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                                  by <strong>{commit.author}</strong> ({commit.date}) — Commit: <code style={{ color: 'var(--color-text-dim)' }}>{commit.hash}</code>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {!isCurrent && (
+                              <button 
+                                className="btn btn-secondary btn-sm" 
+                                style={{ gap: 6, padding: '5px 12px', fontSize: '0.75rem', flexShrink: 0 }} 
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to roll back this website to commit ${commit.hash} (${commit.subject})? This will hard reset the git state and trigger a complete rebuild.`)) {
+                                    runDeploy(commit.hash)
+                                  }
+                                }}
+                                disabled={actionBusy}
+                              >
+                                <RotateCcw size={11} /> Restore Deploy
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
             ) : (
               <div style={{ padding:32, textAlign:'center', display:'flex', flexDirection:'column', alignItems:'center', gap:12, border:'1px dashed var(--color-border)', borderRadius:16 }}>

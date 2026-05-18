@@ -627,10 +627,18 @@ router.post('/:id/deploy', async (req, res) => {
     send(`Deploying ${site.domain}…`)
     const root = site.root || `/var/www/${site.domain}`
 
+    const commitHash = req.body?.commitHash || req.query?.commitHash
     if (fs.existsSync(path.join(root, '.git'))) {
-      send('git pull…')
-      const { stdout: gitOut } = await execAsync(`cd "${root}" && git pull 2>&1`)
-      gitOut.split('\n').filter(Boolean).forEach(l => send(l))
+      if (commitHash) {
+        send(`Restoring / Rolling back to commit ${commitHash}…`)
+        await execAsync(`cd "${root}" && git fetch origin 2>&1 || true`)
+        const { stdout: resetOut } = await execAsync(`cd "${root}" && git reset --hard ${shellQuote(commitHash)} 2>&1`)
+        resetOut.split('\n').filter(Boolean).forEach(l => send(l))
+      } else {
+        send('git pull…')
+        const { stdout: gitOut } = await execAsync(`cd "${root}" && git pull 2>&1`)
+        gitOut.split('\n').filter(Boolean).forEach(l => send(l))
+      }
     }
 
     let installCmd = 'npm install --production'
@@ -803,11 +811,19 @@ router.get('/:id/git', async (req, res) => {
     } catch (e) {}
 
     let lastCommit = null
+    let commits = []
     try {
       const { stdout: commitOut } = await execAsync(`cd "${root}" && git log -1 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
       if (commitOut.trim()) {
         const [hash, author, email, date, subject] = commitOut.trim().split('|')
         lastCommit = { hash, author, email, date, subject }
+      }
+      const { stdout: commitsOut } = await execAsync(`cd "${root}" && git log -20 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
+      if (commitsOut.trim()) {
+        commits = commitsOut.trim().split('\n').filter(Boolean).map(line => {
+          const [hash, author, email, date, subject] = line.split('|')
+          return { hash, author, email, date, subject }
+        })
       }
     } catch (e) {}
 
@@ -823,7 +839,8 @@ router.get('/:id/git', async (req, res) => {
       repoUrl,
       branch,
       lastCommit,
-      behindCount
+      behindCount,
+      commits
     })
   } catch (err) {
     res.status(500).json({ error: err.message })
