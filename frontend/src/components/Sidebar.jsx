@@ -29,23 +29,27 @@ export default function Sidebar({ connected = true }) {
   const navigate = useNavigate()
 
   const handleSignOut = async () => {
-    await signOut()
-    navigate('/login')
+    if (window.confirm('Are you sure you want to sign out of ServerDash?')) {
+      await signOut()
+      navigate('/login')
+    }
   }
 
   return (
     <aside
       style={{
         width: collapsed ? '64px' : '240px',
-        minHeight: '100vh',
+        height: '100vh',
         background: 'var(--color-surface)',
         borderRight: '1px solid var(--color-border)',
         display: 'flex',
         flexDirection: 'column',
         transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)',
-        position: 'relative',
+        position: 'sticky',
+        top: 0,
         flexShrink: 0,
         zIndex: 10,
+        overflow: 'hidden',
       }}
     >
       {/* Logo & branding */}
@@ -113,7 +117,7 @@ export default function Sidebar({ connected = true }) {
       </div>
 
       {/* Navigation */}
-      <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto' }}>
+      <nav style={{ flex: 1, padding: '12px 8px', overflowY: 'auto', minHeight: 0 }}>
         {navItems.map(({ path, icon: Icon, label }) => (
           <NavLink
             key={path}
