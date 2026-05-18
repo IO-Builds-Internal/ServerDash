@@ -676,12 +676,23 @@ router.get('/:id/detail', async (req, res) => {
 
   // Edge functions folder
   try {
-    const fnDir = `${composePath}/functions`
-    if (fs.existsSync(fnDir)) {
-      detail.functions = fs.readdirSync(fnDir, { withFileTypes: true })
-        .filter(d => d.isDirectory())
-        .map(d => d.name)
+    const candidates = [
+      `${composePath}/volumes/functions`,
+      `${composePath}/functions`,
+      `${composePath}/supabase/functions`
+    ]
+    const foundFns = new Set()
+    for (const fnDir of candidates) {
+      if (fs.existsSync(fnDir)) {
+        const files = fs.readdirSync(fnDir, { withFileTypes: true })
+        for (const file of files) {
+          if (file.isDirectory()) {
+            foundFns.add(file.name)
+          }
+        }
+      }
     }
+    detail.functions = Array.from(foundFns)
   } catch {}
 
   res.json(detail)
