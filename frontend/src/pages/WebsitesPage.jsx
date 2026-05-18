@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
-import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, AlertTriangle, Lock, Unlock, Upload, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes } from 'lucide-react'
+import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
 
@@ -508,6 +508,55 @@ export default function WebsitesPage() {
     load()
   }, [load])
 
+  const downloadSiteBackup = async (id, domain) => {
+    try {
+      const token = localAuth.getToken() || ''
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/sites/${id}/backup`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      if (!resp.ok) throw new Error('Backup download failed')
+      const blob = await resp.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${domain}-full-backup.zip`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+    } catch (e) {
+      alert(e.message)
+    }
+  }
+
+  const restoreSiteFromBackup = async () => {
+    const fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.accept = '.zip'
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0]
+      if (!file) return
+      
+      if (!confirm(`⚠️ CRITICAL WARNING: Restoring from a website backup will overwrite existing files, configurations, and MySQL databases for this domain. Are you sure you want to proceed?`)) return
+      
+      const formData = new FormData()
+      formData.append('backupZip', file)
+      
+      setLoading(true)
+      try {
+        const { data } = await api.post(`/api/sites/restore`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        alert(data.message || '✓ Website successfully restored!')
+        await load()
+      } catch (err) {
+        alert(err.response?.data?.error || err.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fileInput.click()
+  }
+
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {showWizard && <Wizard onClose={() => setShowWizard(false)} onCreated={() => { setShowWizard(false); load() }} />}
@@ -521,6 +570,7 @@ export default function WebsitesPage() {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-secondary btn-icon" onClick={load} title="Refresh"><RefreshCw size={14} /></button>
+          <button className="btn btn-secondary" onClick={restoreSiteFromBackup} style={{ display: 'flex', alignItems: 'center', gap: 6, borderColor: 'rgba(59,130,246,0.3)', color: 'var(--color-primary)' }}><Upload size={14} /> Restore ZIP</button>
           <button className="btn btn-primary" onClick={() => setShowWizard(true)}><Plus size={16} /> New Site</button>
         </div>
       </div>
@@ -598,6 +648,13 @@ export default function WebsitesPage() {
                   onClick={() => navigate(`/websites/manage/${site.id}`)}
                 >
                   <Wrench size={13} /> Manage Site
+                </button>
+                <button 
+                  className="btn btn-secondary btn-icon btn-sm"
+                  onClick={() => downloadSiteBackup(site.id, site.domain)}
+                  title="Download full backup zip (files & database)"
+                >
+                  <Download size={13} />
                 </button>
                 <a 
                   href={`${site.ssl ? 'https' : 'http'}://${site.domain}`} 

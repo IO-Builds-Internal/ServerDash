@@ -1500,4 +1500,151 @@ router.post('/:id/mail/test', async (req, res) => {
   }
 })
 
+// ── GET /api/sites/:id/backup ─────────────────────────────────────────────────
+router.get('/:id/backup', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+
+  const domain = site.domain
+  const tmpBackupDir = `/tmp/sd-backup-${domain}-${Date.now()}`
+  const zipPath = `/tmp/${domain}-full-backup-${Date.now()}.zip`
+
+  try {
+    // Ensure tmp dir exists
+    fs.mkdirSync(`${tmpBackupDir}/files`, { recursive: true })
+
+    // 1. Copy Nginx virtual host configuration
+    const nginxAvailable = `/etc/nginx/sites-available/${domain}`
+    if (fs.existsSync(nginxAvailable)) {
+      fs.copyFileSync(nginxAvailable, `${tmpBackupDir}/nginx.conf`)
+    }
+
+    // 2. Export database if attached and credentials are found
+    if (site.database && site.database.name) {
+      const sqlFile = `${tmpBackupDir}/db.sql`
+      try {
+        await execAsync(
+          `mysqldump -u "${site.database.user}" -p"${site.database.password}" "${site.database.name}" > "${sqlFile}"`
+        )
+      } catch (dbErr) {
+        logger.error(`Database export failed during backup of ${domain}`, { error: dbErr.message })
+      }
+    }
+
+    // 3. Copy website files
+    if (fs.existsSync(site.root)) {
+      await execAsync(`cp -r ${site.root}/* "${tmpBackupDir}/files/"`).catch(() => {})
+    }
+
+    // 4. Copy .serverdash.json if present
+    const metaFile = path.join(site.root, '.serverdash.json')
+    if (fs.existsSync(metaFile)) {
+      fs.copyFileSync(metaFile, `${tmpBackupDir}/.serverdash.json`)
+    }
+
+    // 5. Zip up the entire backup folder
+    await execAsync(`cd "${tmpBackupDir}" && zip -r "${zipPath}" .`)
+
+    // Clean up temporary workspace directory
+    await execAsync(`rm -rf "${tmpBackupDir}"`)
+
+    // 6. Serve the zip download
+    res.download(zipPath, `${domain}-full-backup.zip`, async (err) => {
+      // Cleanup the generated zip file after download finishes
+      await execAsync(`rm -f "${zipPath}"`).catch(() => {})
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/sites/restore ───────────────────────────────────────────────────
+router.post('/restore', upload.single('backupZip'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No backup zip file provided' })
+
+  const localZip = req.file.path
+  const restoreUuid = require('crypto').randomUUID()
+  const extractDir = `/tmp/sd-restore-${restoreUuid}`
+
+  try {
+    fs.mkdirSync(extractDir, { recursive: true })
+
+    // 1. Unzip the archive
+    await execAsync(`unzip -o "${localZip}" -d "${extractDir}"`)
+
+    // 2. Load and validate domain
+    let domain = null
+    const metaPath = `${extractDir}/.serverdash.json`
+    const nginxPath = `${extractDir}/nginx.conf`
+
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+        domain = meta.domain
+      } catch {}
+    }
+
+    if (!domain && fs.existsSync(nginxPath)) {
+      // Deduce domain from Nginx server_name
+      const conf = fs.readFileSync(nginxPath, 'utf8')
+      domain = (conf.match(/server_name\s+([^;]+);/) || [])[1]?.trim().split(/\s+/)[0]
+    }
+
+    if (!domain) {
+      domain = `restored-site-${Date.now()}.com`
+    }
+
+    // 3. Restore Nginx Configuration
+    if (fs.existsSync(nginxPath)) {
+      fs.copyFileSync(nginxPath, `/etc/nginx/sites-available/${domain}`)
+      await execAsync(`ln -sf "/etc/nginx/sites-available/${domain}" "/etc/nginx/sites-enabled/${domain}"`)
+    }
+
+    // Determine destination root folder
+    const targetRoot = `/var/www/${domain}`
+    fs.mkdirSync(targetRoot, { recursive: true })
+
+    // 4. Copy website files
+    const sourceFiles = `${extractDir}/files`
+    if (fs.existsSync(sourceFiles)) {
+      await execAsync(`cp -rf sourceFiles=${sourceFiles}/* "${targetRoot}/"`).catch(async () => {
+        // Fallback robust copy
+        await execAsync(`cp -rf "${sourceFiles}"/. "${targetRoot}/"`)
+      })
+    }
+
+    // Copy .serverdash.json back
+    if (fs.existsSync(metaPath)) {
+      fs.copyFileSync(metaPath, `${targetRoot}/.serverdash.json`)
+    }
+
+    // 5. Restore SQL Database if exists
+    const sqlPath = `${extractDir}/db.sql`
+    if (fs.existsSync(sqlPath)) {
+      // Find credentials from site's .serverdash.json or database connection files
+      const dbCreds = getDatabaseCredentials(targetRoot)
+      if (dbCreds && dbCreds.name) {
+        // Create database if not exists
+        await execAsync(`mysql -u root -e "CREATE DATABASE IF NOT EXISTS \`${dbCreds.name}\`;"`).catch(() => {})
+        // Import SQL
+        await execAsync(`mysql -u "${dbCreds.user}" -p"${dbCreds.password}" "${dbCreds.name}" < "${sqlPath}"`).catch(() => {})
+      }
+    }
+
+    // 6. Test Nginx and reload
+    try {
+      await execAsync('nginx -t')
+      await execAsync('systemctl reload nginx')
+    } catch {}
+
+    // Cleanup restore workspaces
+    await execAsync(`rm -rf "${extractDir}"`)
+    await execAsync(`rm -f "${localZip}"`)
+
+    res.json({ success: true, message: `Website '${domain}' successfully restored from full backup zip!` })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

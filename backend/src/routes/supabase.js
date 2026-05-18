@@ -1009,4 +1009,56 @@ router.post('/:id/functions/deploy', async (req, res) => {
   }
 })
 
+// ── POST /api/supabase/:id/restore ────────────────────────────────────────────
+router.post('/:id/restore', upload.single('restoreFile'), async (req, res) => {
+  const { id } = req.params
+  const builtin = detectBuiltinProject()
+  const allProjects = [...(builtin ? [builtin] : []), ...loadProjects()]
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+  if (!req.file) return res.status(400).json({ error: 'No backup SQL file provided' })
+
+  try {
+    const localPath = req.file.path
+    const containerSqlPath = '/tmp/restore.sql'
+
+    // Find active database container name/id
+    const { stdout: containerId } = await ssh.exec(
+      `docker ps -qf "name=${project.id}-db" | head -1`,
+      { timeout: 10000 }
+    )
+
+    const dbContainer = containerId.trim()
+    if (!dbContainer) {
+      return res.status(400).json({ error: 'Supabase database container is not running.' })
+    }
+
+    // 1. Copy the sql script into the running DB docker container
+    await ssh.exec(`docker cp "${localPath}" "${dbContainer}:${containerSqlPath}"`)
+
+    // 2. Drop public schema to ensure fresh restore and no key/relationship collisions
+    await ssh.exec(
+      `docker exec -i "${dbContainer}" psql -U postgres -d postgres -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;"`
+    )
+
+    // 3. Execute the sql restore inside the container
+    const restoreExec = await ssh.exec(
+      `docker exec -i "${dbContainer}" psql -U postgres -d postgres -f "${containerSqlPath}"`,
+      { timeout: 300000 }
+    )
+
+    // Cleanup local tmp upload and container tmp file
+    await ssh.exec(`rm -f "${localPath}"`)
+    await ssh.exec(`docker exec -i "${dbContainer}" rm -f "${containerSqlPath}"`, { ignoreErrors: true })
+
+    if (restoreExec.stderr && restoreExec.stderr.includes('FATAL')) {
+      return res.status(500).json({ error: restoreExec.stderr })
+    }
+
+    res.json({ success: true, message: 'Database schema and contents successfully restored!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

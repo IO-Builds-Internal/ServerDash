@@ -17,6 +17,7 @@ import SettingsPage from './pages/SettingsPage'
 import SiteDetailPage from './pages/SiteDetailPage'
 import PortsPage from './pages/PortsPage'
 import FtpPage from './pages/FtpPage'
+import SnapshotsPage from './pages/SnapshotsPage'
 import { Server } from 'lucide-react'
 import { BrandingProvider, useBranding } from './contexts/BrandingContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -39,6 +40,7 @@ function DashboardLayout() {
           <Route path="/supabase" element={<SupabasePage />} />
           <Route path="/supabase/project/:id" element={<ProjectDetailPage />} />
           <Route path="/smtp" element={<SmtpPage />} />
+          <Route path="/snapshots" element={<SnapshotsPage />} />
           <Route path="/ports" element={<PortsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />

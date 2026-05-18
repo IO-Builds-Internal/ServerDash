@@ -837,6 +837,31 @@ export default function SupabasePage() {
     }
   }
 
+  const restore = async (id) => {
+    const fileInput = document.createElement('input')
+    fileInput.type = 'file'
+    fileInput.accept = '.sql'
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0]
+      if (!file) return
+      
+      if (!confirm(`⚠️ CRITICAL WARNING: Restoring this backup SQL file will completely overwrite your Supabase database schema and all existing data. Are you sure you want to proceed?`)) return
+      
+      const formData = new FormData()
+      formData.append('restoreFile', file)
+      
+      try {
+        const { data } = await api.post(`/api/supabase/${id}/restore`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+        alert(data.message || '✓ Database successfully restored!')
+      } catch (err) {
+        alert(err.response?.data?.error || err.message)
+      }
+    }
+    fileInput.click()
+  }
+
   const dbPorts = ports.filter(p => p.process?.includes('docker') || p.process?.includes('postgres') || [5432, 55432, 65432, 6543].includes(p.port))
   const webPorts = ports.filter(p => p.process?.includes('nginx') || p.process?.includes('node') || p.process?.includes('docker-proxy'))
 
@@ -968,6 +993,7 @@ export default function SupabasePage() {
                       </>
                     )}
                     <button className="btn btn-secondary btn-sm" onClick={() => backup(p.id, p.name)}><Download size={12} /> Backup</button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => restore(p.id)} style={{ borderColor: 'rgba(59,130,246,0.3)', color: 'var(--color-primary)' }}><Upload size={12} /> Restore</button>
                   </div>
                 </div>
               </div>
