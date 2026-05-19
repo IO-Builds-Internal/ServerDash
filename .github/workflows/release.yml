@@ -25,10 +25,10 @@ jobs:
             We are excited to announce the release of **ServerDash ${{ github.ref_name }}**!
             
             ### ✨ What's New:
-            - **🔄 Git Autolinking & Self-Upgrader**: Fully automated web-based panel self-upgrades and SSE streaming log outputs.
-            - **📍 Local Geolocation Map Engine**: Offline country flag lookups taking under 0.2ms per visitor connection.
-            - **🔒 Dashboard Security Shield**: View-only administrative locks and 403 deletion blockades on default sites.
-            - **💻 Administrative Shell Console**: Quick shell command presets and execution log consoles.
+            - **💻 Postgres SQL Editor & Tables Explorer**: Visual database schema tables sidebar navigator and query runner integrated inside the full-page Supabase dashboard.
+            - **⚡ Bypassed Supavisor Connection Restrictions**: Dynamically fetches the PostgreSQL container IP for direct, fast, reliable database queries, bypassing Pooler blocks.
+            - **📍 Unified Websites Stack Tabs**: Effortlessly filter and isolate websites by categories (`Supabase`, `WordPress / PHP`, `Node.js`, `Static / HTML`, `System Panel`).
+            - **📬 Premium SMTP Dashboard**: Real-time Postfix system control cards, live diagnostic terminal streams, and dynamic server-domain discovery.
           draft: false
           prerelease: false
         env:
