@@ -34,6 +34,27 @@ async function detectSupabaseSmtp() {
   return null
 }
 
+// GET /api/smtp/server-info
+router.get('/server-info', (req, res) => {
+  const os = require('os')
+  let hostname = os.hostname() || 'localhost'
+  
+  let ip = '127.0.0.1'
+  try {
+    const nets = os.networkInterfaces()
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          ip = net.address
+          break
+        }
+      }
+    }
+  } catch {}
+
+  res.json({ hostname, ip })
+})
+
 // GET /api/smtp/config
 router.get('/config', async (req, res) => {
   if (!smtpConfig.host) {
