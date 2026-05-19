@@ -941,6 +941,54 @@ router.post('/:id/proxy', async (req, res) => {
   }
 })
 
+// ── POST /api/supabase/:id/query ──────────────────────────────────────────────
+router.post('/:id/query', async (req, res) => {
+  const { id } = req.params
+  const { sql } = req.body
+
+  if (!sql || !sql.trim()) {
+    return res.status(400).json({ error: 'SQL query required' })
+  }
+
+  const projects = loadProjects()
+  const projectIndex = projects.findIndex(p => p.id === id)
+  const builtin = detectBuiltinProject()
+  
+  let project
+  if (projectIndex !== -1) {
+    project = projects[projectIndex]
+  } else if (builtin && builtin.id === id) {
+    project = builtin
+  }
+
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  let connStr = project.dbConn
+  if (connStr && project.dbPort) {
+    connStr = connStr.replace(/@[\d\.]+(:\d+)?\//, `@127.0.0.1:${project.dbPort}/`)
+  }
+
+  const { Client } = require('pg')
+  const client = new Client({ connectionString: connStr })
+
+  try {
+    await client.connect()
+    const result = await client.query(sql)
+    
+    res.json({
+      success: true,
+      command: result.command,
+      rowCount: result.rowCount,
+      fields: result.fields ? result.fields.map(f => f.name) : [],
+      rows: result.rows || []
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  } finally {
+    try { await client.end() } catch {}
+  }
+})
+
 // ── POST /api/supabase/:id/start|stop|restart ─────────────────────────────────
 router.post('/:id/:action', async (req, res) => {
   const { id, action } = req.params

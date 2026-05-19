@@ -199,6 +199,25 @@ function ManageModal({ project, onClose, onRefresh }) {
   const migRef = useRef(null)
   const logsRef = useRef(null)
 
+  const [sqlQuery, setSqlQuery] = useState("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+  const [queryResults, setQueryResults] = useState(null)
+  const [queryError, setQueryError] = useState(null)
+  const [queryBusy, setQueryBusy] = useState(false)
+
+  const runQuery = async () => {
+    setQueryBusy(true)
+    setQueryError(null)
+    setQueryResults(null)
+    try {
+      const { data } = await api.post(`/api/supabase/${project.id}/query`, { sql: sqlQuery })
+      setQueryResults(data)
+    } catch (e) {
+      setQueryError(e.response?.data?.error || e.message)
+    } finally {
+      setQueryBusy(false)
+    }
+  }
+
   useEffect(() => {
     if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight
   }, [logs])
@@ -290,7 +309,8 @@ function ManageModal({ project, onClose, onRefresh }) {
 
   const TABS = [
     { id: 'overview', label: 'Containers', icon: Layers },
-    { id: 'migrations', label: 'Migrations', icon: Database },
+    { id: 'sql', label: 'SQL Editor', icon: Database },
+    { id: 'migrations', label: 'Migrations', icon: FolderOpen },
     { id: 'env', label: '.env', icon: Settings },
     { id: 'compose', label: 'docker-compose.yml', icon: FileText },
     { id: 'functions', label: 'Functions', icon: Code2 },
@@ -425,6 +445,117 @@ function ManageModal({ project, onClose, onRefresh }) {
                           <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{(m.size / 1024).toFixed(1)} KB</span>
                         </div>
                       ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* SQL EDITOR TAB */}
+              {tab === 'sql' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>⚡ SQL Editor</h4>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Execute custom SQL commands directly on your Supabase PostgreSQL instance.</p>
+                    </div>
+                    
+                    {/* Pre-made helpers */}
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {[
+                        { name: '📋 List Tables', query: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';" },
+                        { name: '👥 List Users', query: "SELECT id, email, created_at FROM auth.users LIMIT 10;" },
+                        { name: '🛡️ Show RLS', query: "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';" }
+                      ].map(helper => (
+                        <button 
+                          key={helper.name} 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => setSqlQuery(helper.query)}
+                          style={{ padding: '3px 8px', fontSize: '0.7rem' }}
+                        >
+                          {helper.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <textarea 
+                      className="input" 
+                      value={sqlQuery} 
+                      onChange={e => setSqlQuery(e.target.value)} 
+                      style={{ 
+                        width: '100%', 
+                        height: 120, 
+                        fontFamily: 'var(--font-mono)', 
+                        fontSize: '0.8rem', 
+                        lineHeight: 1.5,
+                        background: 'var(--color-surface-2)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 8,
+                        padding: 12,
+                        color: 'var(--color-text)',
+                        resize: 'vertical'
+                      }}
+                      placeholder="Enter your SQL query here..."
+                    />
+                    
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <button 
+                        className="btn btn-primary btn-sm" 
+                        onClick={runQuery} 
+                        disabled={queryBusy || !sqlQuery.trim()}
+                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px' }}
+                      >
+                        <Play size={12} className={queryBusy ? 'animate-spin' : ''} />
+                        {queryBusy ? 'Running Query...' : '⚡ Execute Query'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {queryError && (
+                    <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, color: 'var(--color-danger)', fontSize: '0.82rem', fontFamily: 'var(--font-mono)' }}>
+                      ❌ Error: {queryError}
+                    </div>
+                  )}
+
+                  {queryResults && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-success)' }}>
+                          ✓ Success: {queryResults.command} completed ({queryResults.rowCount !== null ? `${queryResults.rowCount} rows affected` : 'done'})
+                        </span>
+                      </div>
+
+                      {queryResults.rows && queryResults.rows.length > 0 ? (
+                        <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-surface-1)' }}>
+                          <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                            <thead>
+                              <tr style={{ background: 'var(--color-surface-3)', borderBottom: '1px solid var(--color-border)' }}>
+                                {queryResults.fields.map(field => (
+                                  <th key={field} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                    {field}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {queryResults.rows.map((row, idx) => (
+                                <tr key={idx} style={{ borderBottom: idx < queryResults.rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                                  {queryResults.fields.map(field => (
+                                    <td key={field} style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+                                      {row[field] === null ? <em style={{ color: 'var(--color-text-muted)' }}>null</em> : String(row[field])}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <div style={{ padding: '16px', background: 'var(--color-surface-2)', borderRadius: 8, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                          Query returned 0 rows.
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
