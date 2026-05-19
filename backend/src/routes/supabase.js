@@ -1061,4 +1061,87 @@ router.post('/:id/restore', upload.single('restoreFile'), async (req, res) => {
   }
 })
 
+// ── POST /api/supabase/:id/proxy ──────────────────────────────────────────────
+router.post('/:id/proxy', async (req, res) => {
+  const { id } = req.params
+  const { apiDomain, studioDomain } = req.body
+
+  if (!apiDomain && !studioDomain) {
+    return res.status(400).json({ error: 'At least one domain must be provided' })
+  }
+
+  const projects = loadProjects()
+  const projectIndex = projects.findIndex(p => p.id === id)
+  const builtin = detectBuiltinProject()
+  
+  let project
+  if (projectIndex !== -1) {
+    project = projects[projectIndex]
+  } else if (builtin && builtin.id === id) {
+    project = builtin
+  }
+
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const results = []
+  
+  const setupNginxProxy = async (domain, port, typeLabel) => {
+    const nginxConf = `server {
+    listen 80;
+    server_name ${domain};
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}`
+    
+    const availablePath = `/etc/nginx/sites-available/${domain}`
+    const enabledPath = `/etc/nginx/sites-enabled/${domain}`
+    
+    fs.writeFileSync(availablePath, nginxConf, 'utf8')
+    try {
+      execSync(`ln -sf ${availablePath} ${enabledPath}`)
+      execSync('nginx -t')
+      execSync('systemctl reload nginx')
+      results.push(`✓ Nginx reverse proxy configured for ${typeLabel} (${domain} -> :${port})`)
+      return true
+    } catch (e) {
+      // Rollback symlink if Nginx config validation failed
+      try { fs.unlinkSync(enabledPath) } catch {}
+      try { fs.unlinkSync(availablePath) } catch {}
+      throw new Error(`Failed to configure ${typeLabel} proxy: ${e.message}`)
+    }
+  }
+
+  try {
+    if (apiDomain) {
+      const port = project.kongPort || 8000
+      await setupNginxProxy(apiDomain.trim(), port, 'API Gateway')
+      project.apiUrl = `http://${apiDomain.trim()}`
+    }
+
+    if (studioDomain) {
+      const port = project.studioPort || 3000
+      await setupNginxProxy(studioDomain.trim(), port, 'Studio Dashboard')
+      project.studioUrl = `http://${studioDomain.trim()}`
+    }
+
+    // Save project if it's a persistent project
+    if (projectIndex !== -1) {
+      projects[projectIndex] = project
+      saveProjects(projects)
+    }
+
+    res.json({ success: true, results, apiUrl: project.apiUrl, studioUrl: project.studioUrl })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

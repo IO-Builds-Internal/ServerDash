@@ -636,50 +636,100 @@ server {
 `
 }
 
-function ProxyModal({ project, onClose }) {
+function ProxyModal({ project, onClose, onRefresh }) {
   const [apiDomain, setApiDomain] = useState(`${project.name}.example.com`)
   const [studioDomain, setStudioDomain] = useState(`${project.name}-studio.example.com`)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(null)
+  const [successMsg, setSuccessMsg] = useState(null)
+
   const config = proxyConfigFor(project, apiDomain, studioDomain)
   const clientEnv = `VITE_SUPABASE_URL=https://${apiDomain}
 VITE_SUPABASE_ANON_KEY=${project.anonKey || ''}
 `
+
+  const applyProxy = async () => {
+    setError(null)
+    setSuccessMsg(null)
+    setBusy(true)
+    try {
+      const { data } = await api.post(`/api/supabase/${project.id}/proxy`, {
+        apiDomain: apiDomain.trim() || null,
+        studioDomain: studioDomain.trim() || null
+      })
+      setSuccessMsg('✓ Reverse Proxy configured successfully! Nginx blocks are loaded and reloaded.')
+      if (onRefresh) onRefresh()
+    } catch (e) {
+      setError(e.response?.data?.error || e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <Overlay onClose={onClose}>
       <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 820, maxHeight: '92vh', overflowY: 'auto', padding: 28, display: 'flex', flexDirection: 'column', gap: 18 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>{project.name} Proxy Config</h2>
-            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Generate nginx reverse-proxy blocks and client env values for this project.</p>
+            <h2 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 700 }}>🔗 {project.name} Domain & Proxy</h2>
+            <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Configure domains and bind nginx reverse-proxy directly to your Supabase services.</p>
           </div>
           <button className="btn btn-secondary" onClick={onClose}><X size={16}/></button>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <label className="label">API Domain</label>
-            <input className="input" value={apiDomain} onChange={e => setApiDomain(e.target.value.trim())} />
+            <label className="label">API Gateway Domain</label>
+            <input className="input" value={apiDomain} onChange={e => setApiDomain(e.target.value.trim())} placeholder="supabase.example.com" />
+            <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>Maps to Kong API Port (<code>:{project.kongPort || 8000}</code>)</p>
           </div>
           <div>
-            <label className="label">Studio Domain</label>
-            <input className="input" value={studioDomain} onChange={e => setStudioDomain(e.target.value.trim())} />
+            <label className="label">Studio Dashboard Domain</label>
+            <input className="input" value={studioDomain} onChange={e => setStudioDomain(e.target.value.trim())} placeholder="supabase-studio.example.com" />
+            <p style={{ margin: '4px 0 0', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>Maps to Studio Web Port (<code>:{project.studioPort || 3000}</code>)</p>
           </div>
         </div>
 
-        <div>
+        {/* Bind action button */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, borderTop: '1px solid var(--color-border)', paddingTop: 16, marginTop: 4 }}>
+          <button className="btn btn-secondary" onClick={onClose}>Cancel</button>
+          <button 
+            className="btn btn-primary" 
+            onClick={applyProxy} 
+            disabled={busy || (!apiDomain && !studioDomain)}
+            style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+          >
+            <Globe size={14} className={busy ? 'animate-spin' : ''} />
+            {busy ? 'Configuring Proxy...' : '🚀 Automate Nginx Proxy Binding'}
+          </button>
+        </div>
+
+        {error && (
+          <div style={{ padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 6, color: 'var(--color-danger)', fontSize: '0.82rem' }}>
+            {error}
+          </div>
+        )}
+
+        {successMsg && (
+          <div style={{ padding: '10px 14px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.2)', borderRadius: 6, color: 'var(--color-success)', fontSize: '0.82rem' }}>
+            {successMsg}
+          </div>
+        )}
+
+        <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>nginx server blocks</h3>
+            <h3 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Preview generated nginx blocks</h3>
             <CopyButton text={config} />
           </div>
-          <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.55 }}>{config}</pre>
+          <pre style={{ margin: 0, padding: 14, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.5 }}>{config}</pre>
         </div>
 
         <div>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <h3 style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600 }}>Frontend client env</h3>
+            <h3 style={{ margin: 0, fontSize: '0.85rem', fontWeight: 600, color: 'var(--color-text-muted)' }}>Frontend client env settings</h3>
             <CopyButton text={clientEnv} />
           </div>
-          <pre style={{ margin: 0, padding: 16, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.75rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.55 }}>{clientEnv}</pre>
+          <pre style={{ margin: 0, padding: 14, background: 'var(--color-surface-2)', borderRadius: 8, border: '1px solid var(--color-border)', fontSize: '0.72rem', fontFamily: 'var(--font-mono)', whiteSpace: 'pre-wrap', color: 'var(--color-text)', lineHeight: 1.5 }}>{clientEnv}</pre>
         </div>
       </div>
     </Overlay>
@@ -921,7 +971,7 @@ export default function SupabasePage() {
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {showNew && <SupabaseWizard onClose={() => setShowNew(false)} onCreated={() => { load() }} />}
       {showRegister && <RegisterModal onClose={() => setShowRegister(false)} onRegistered={() => { load() }} />}
-      {proxyProject && <ProxyModal project={proxyProject} onClose={() => setProxyProject(null)} />}
+      {proxyProject && <ProxyModal project={proxyProject} onClose={() => setProxyProject(null)} onRefresh={load} />}
 
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -988,8 +1038,17 @@ export default function SupabasePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <a href={p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.apiUrl}</a>
                         <CopyButton text={p.apiUrl} />
-                        <button className="btn btn-secondary btn-sm" onClick={() => setProxyProject(p)} style={{ padding: '2px 8px', fontSize: '0.72rem' }}>
-                          <Network size={11} /> Proxy
+                        <button 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => setProxyProject(p)} 
+                          style={{ 
+                            padding: '3px 10px', 
+                            fontSize: '0.72rem', 
+                            border: (p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl)) ? '1px dashed var(--color-primary)' : '1px solid var(--color-border)',
+                            background: (p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl)) ? 'rgba(99,102,241,0.03)' : 'transparent'
+                          }}
+                        >
+                          <Globe size={11} /> Bind Domain / Proxy
                         </button>
                       </div>
 
