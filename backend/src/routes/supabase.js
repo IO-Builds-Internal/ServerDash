@@ -941,6 +941,23 @@ router.post('/:id/proxy', async (req, res) => {
   }
 })
 
+// Helper to dynamically resolve database container IP to bypass pooler (Supavisor) connection restrictions on the host
+const getDatabaseHost = (project) => {
+  try {
+    const containerName = `${project.name}-db`
+    const ip = execSync(`docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${containerName} 2>/dev/null`)
+      .toString()
+      .trim()
+    if (ip) {
+      logger.info(`Resolved DB container IP for project ${project.name}: ${ip}`)
+      return ip
+    }
+  } catch (e) {
+    logger.warn(`Could not resolve DB container IP for project ${project.name}: ${e.message}`)
+  }
+  return '127.0.0.1' // fallback
+}
+
 // ── POST /api/supabase/:id/query ──────────────────────────────────────────────
 router.post('/:id/query', async (req, res) => {
   const { id } = req.params
@@ -965,7 +982,8 @@ router.post('/:id/query', async (req, res) => {
 
   let connStr = project.dbConn
   if (connStr && project.dbPort) {
-    connStr = connStr.replace(/@[\d\.]+(:\d+)?\//, `@127.0.0.1:${project.dbPort}/`)
+    const dbHost = getDatabaseHost(project)
+    connStr = connStr.replace(/@[\d\.]+(:\d+)?\//, `@${dbHost}:${project.dbPort}/`)
   }
 
   const { Client } = require('pg')
