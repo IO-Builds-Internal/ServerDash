@@ -218,6 +218,20 @@ function ManageModal({ project, onClose, onRefresh }) {
     }
   }
 
+  const [tablesList, setTablesList] = useState([])
+
+  useEffect(() => {
+    if (tab === 'sql') {
+      api.post(`/api/supabase/${project.id}/query`, { sql: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;" })
+        .then(r => {
+          if (r.data?.rows) {
+            setTablesList(r.data.rows.map(row => row.table_name))
+          }
+        })
+        .catch(() => {})
+    }
+  }, [tab, project.id])
+
   useEffect(() => {
     if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight
   }, [logs])
@@ -331,18 +345,23 @@ function ManageModal({ project, onClose, onRefresh }) {
         </div>
 
         {/* Tabs */}
-        <div style={{ display: 'flex', gap: 2, padding: '12px 24px 0', borderBottom: '1px solid var(--color-border)', flexShrink: 0, overflowX: 'auto' }}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => { setTab(t.id); if (t.id === 'logs') fetchLogs() }}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', fontSize: '0.8125rem', fontWeight: 500,
-                background: tab === t.id ? 'var(--color-primary)' : 'transparent',
-                color: tab === t.id ? 'white' : 'var(--color-text-muted)',
-                border: 'none', borderRadius: '8px 8px 0 0', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>
-              <t.icon size={13}/>{t.label}
-            </button>
-          ))}
+        <div style={{ display: 'flex', gap: 6, padding: '12px 24px', borderBottom: '1px solid var(--color-border)', flexShrink: 0, overflowX: 'auto', background: 'var(--color-surface-2)' }}>
+          {TABS.map(t => {
+            const isActive = tab === t.id
+            return (
+              <button key={t.id} onClick={() => { setTab(t.id); if (t.id === 'logs') fetchLogs() }}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: '0.8rem', fontWeight: isActive ? 600 : 500,
+                  background: isActive ? 'var(--color-surface-3)' : 'transparent',
+                  color: isActive ? 'var(--color-primary)' : 'var(--color-text-dim)',
+                  border: 'none', borderRadius: '8px', cursor: 'pointer', whiteSpace: 'nowrap',
+                  transition: 'all 0.15s ease',
+                  borderBottom: isActive ? '2px solid var(--color-primary)' : 'none',
+                }}>
+                <t.icon size={13}/>{t.label}
+              </button>
+            )
+          })}
         </div>
 
         {/* Content */}
@@ -353,46 +372,125 @@ function ManageModal({ project, onClose, onRefresh }) {
             <>
               {/* CONTAINERS TAB */}
               {tab === 'overview' && (
-                <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
-                    {(detail?.containers || []).length === 0 ? (
-                      <p style={{ color: 'var(--color-text-muted)', gridColumn: '1/-1' }}>No running containers. Start the project first.</p>
-                    ) : detail.containers.map((c, i) => {
-                      const running = (c.State || '').toLowerCase() === 'running'
-                      const healthy = (c.Health || '').toLowerCase() === 'healthy'
-                      return (
-                        <div key={i} className="glass-card" style={{ padding: 14 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                            <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>{c.Service || c.Name}</span>
-                            <span style={{
-                              fontSize: '0.7rem', padding: '2px 8px', borderRadius: 20,
-                              background: running ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.1)',
-                              color: running ? 'var(--color-success)' : 'var(--color-danger)',
-                            }}>{c.State}{healthy ? ' · healthy' : ''}</span>
-                          </div>
-                          {(c.Publishers || []).filter(p => p.PublishedPort > 0).map((p, j) => (
-                            <div key={j} style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                              :{p.PublishedPort} → :{p.TargetPort}/{p.Protocol}
-                            </div>
-                          ))}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  
+                  {/* Summary Grid Widgets */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+                    <div style={{ background: 'var(--color-surface-2)', padding: 16, borderRadius: 10, border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: 8, background: 'rgba(59,130,246,0.1)', color: 'var(--color-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Layers size={18} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Total Services</div>
+                        <div style={{ fontSize: '1.2rem', fontWeight: 800 }}>{(detail?.containers || []).length}</div>
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--color-surface-2)', padding: 16, borderRadius: 10, border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ 
+                        width: 36, height: 36, borderRadius: 8, 
+                        background: (detail?.containers || []).some(c => c.Service === 'db' && c.State.toLowerCase() === 'running') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', 
+                        color: (detail?.containers || []).some(c => c.Service === 'db' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)', 
+                        display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                      }}>
+                        <Database size={18} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Database Status</div>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 700, color: (detail?.containers || []).some(c => c.Service === 'db' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                          {(detail?.containers || []).some(c => c.Service === 'db' && c.State.toLowerCase() === 'running') ? 'Online' : 'Offline'}
                         </div>
-                      )
-                    })}
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--color-surface-2)', padding: 16, borderRadius: 10, border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ 
+                        width: 36, height: 36, borderRadius: 8, 
+                        background: (detail?.containers || []).some(c => c.Service === 'kong' && c.State.toLowerCase() === 'running') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', 
+                        color: (detail?.containers || []).some(c => c.Service === 'kong' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)', 
+                        display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                      }}>
+                        <Globe size={18} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>API Gateway (Kong)</div>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 700, color: (detail?.containers || []).some(c => c.Service === 'kong' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                          {(detail?.containers || []).some(c => c.Service === 'kong' && c.State.toLowerCase() === 'running') ? 'Online' : 'Offline'}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ background: 'var(--color-surface-2)', padding: 16, borderRadius: 10, border: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+                      <div style={{ 
+                        width: 36, height: 36, borderRadius: 8, 
+                        background: (detail?.containers || []).some(c => c.Service === 'studio' && c.State.toLowerCase() === 'running') ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', 
+                        color: (detail?.containers || []).some(c => c.Service === 'studio' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)', 
+                        display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                      }}>
+                        <Cpu size={18} />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontWeight: 500 }}>Studio Console</div>
+                        <div style={{ fontSize: '0.875rem', fontWeight: 700, color: (detail?.containers || []).some(c => c.Service === 'studio' && c.State.toLowerCase() === 'running') ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                          {(detail?.containers || []).some(c => c.Service === 'studio' && c.State.toLowerCase() === 'running') ? 'Online' : 'Offline'}
+                        </div>
+                      </div>
+                    </div>
                   </div>
+
+                  {/* Active Services Grid */}
+                  <div>
+                    <h4 style={{ fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text-muted)', marginBottom: 12 }}>Services & Containers</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+                      {(detail?.containers || []).length === 0 ? (
+                        <p style={{ color: 'var(--color-text-muted)', gridColumn: '1/-1' }}>No running containers. Start the project first.</p>
+                      ) : detail.containers.map((c, i) => {
+                        const running = (c.State || '').toLowerCase() === 'running'
+                        const healthy = (c.Health || '').toLowerCase() === 'healthy'
+                        return (
+                          <div key={i} className="glass-card" style={{ padding: 16, border: '1px solid var(--color-border)', background: 'var(--color-surface-1)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--color-text)' }}>{c.Service || c.Name}</span>
+                              <span style={{
+                                fontSize: '0.68rem', padding: '2px 8px', borderRadius: 20, fontWeight: 600,
+                                background: running ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+                                color: running ? 'var(--color-success)' : 'var(--color-danger)',
+                                border: running ? '1px solid rgba(16,185,129,0.15)' : '1px solid rgba(239,68,68,0.15)'
+                              }}>{c.State}{healthy ? ' · healthy' : ''}</span>
+                            </div>
+                            {(c.Publishers || []).filter(p => p.PublishedPort > 0).map((p, j) => (
+                              <div key={j} style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', background: 'var(--color-surface-2)', padding: '4px 8px', borderRadius: 4, width: 'fit-content' }}>
+                                port :{p.PublishedPort} → :{p.TargetPort}/{p.Protocol}
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+
                   {(detail?.ports || []).length > 0 && (
                     <>
-                      <h4 style={{ marginTop: 24, marginBottom: 12, fontSize: '0.875rem', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Published Ports</h4>
-                      <table style={{ width: '100%', fontSize: '0.8125rem', borderCollapse: 'collapse' }}>
-                        <thead><tr>{['Service','Published','Target','Protocol'].map(h => <th key={h} style={{ textAlign: 'left', padding: '6px 10px', color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}>{h}</th>)}</tr></thead>
-                        <tbody>{detail.ports.map((p, i) => (
-                          <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{p.container}</td>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)', color: 'var(--color-primary)' }}>{p.published}</td>
-                            <td style={{ padding: '6px 10px', fontFamily: 'var(--font-mono)' }}>{p.target}</td>
-                            <td style={{ padding: '6px 10px', color: 'var(--color-text-muted)' }}>{p.protocol}</td>
-                          </tr>
-                        ))}</tbody>
-                      </table>
+                      <h4 style={{ marginTop: 24, marginBottom: 12, fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Published Ports Map</h4>
+                      <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 10, background: 'var(--color-surface-2)' }}>
+                        <table style={{ width: '100%', fontSize: '0.8rem', borderCollapse: 'collapse' }}>
+                          <thead>
+                            <tr style={{ background: 'var(--color-surface-3)', borderBottom: '1px solid var(--color-border)' }}>
+                              {['Service Container','Host Port Mapping','Target Container Port','Protocol'].map(h => <th key={h} style={{ textAlign: 'left', padding: '10px 14px', fontWeight: 600, color: 'var(--color-text-muted)' }}>{h}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {detail.ports.map((p, i) => (
+                              <tr key={i} style={{ borderBottom: i < detail.ports.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                                <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{p.container}</td>
+                                <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-primary)', fontWeight: 600 }}>{p.published}</td>
+                                <td style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)' }}>{p.target}</td>
+                                <td style={{ padding: '10px 14px', color: 'var(--color-text-muted)' }}>{p.protocol}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </>
                   )}
                 </div>
@@ -452,112 +550,173 @@ function ManageModal({ project, onClose, onRefresh }) {
 
               {/* SQL EDITOR TAB */}
               {tab === 'sql' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>⚡ SQL Editor</h4>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Execute custom SQL commands directly on your Supabase PostgreSQL instance.</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 20, minHeight: 480 }}>
+                  {/* Left Column - Schema Tables Explorer */}
+                  <div style={{ background: 'var(--color-surface-2)', borderRadius: 10, padding: 14, border: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderBottom: '1px solid var(--color-border)', paddingBottom: 8 }}>
+                      <Database size={13} color="var(--color-primary)" />
+                      <span style={{ fontSize: '0.8rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: 'var(--color-text)' }}>Tables Explorer</span>
                     </div>
-                    
-                    {/* Pre-made helpers */}
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {[
-                        { name: '📋 List Tables', query: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';" },
-                        { name: '👥 List Users', query: "SELECT id, email, created_at FROM auth.users LIMIT 10;" },
-                        { name: '🛡️ Show RLS', query: "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';" }
-                      ].map(helper => (
-                        <button 
-                          key={helper.name} 
-                          className="btn btn-secondary btn-sm" 
-                          onClick={() => setSqlQuery(helper.query)}
-                          style={{ padding: '3px 8px', fontSize: '0.7rem' }}
-                        >
-                          {helper.name}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <textarea 
-                      className="input" 
-                      value={sqlQuery} 
-                      onChange={e => setSqlQuery(e.target.value)} 
-                      style={{ 
-                        width: '100%', 
-                        height: 120, 
-                        fontFamily: 'var(--font-mono)', 
-                        fontSize: '0.8rem', 
-                        lineHeight: 1.5,
-                        background: 'var(--color-surface-2)',
-                        border: '1px solid var(--color-border)',
-                        borderRadius: 8,
-                        padding: 12,
-                        color: 'var(--color-text)',
-                        resize: 'vertical'
-                      }}
-                      placeholder="Enter your SQL query here..."
-                    />
-                    
-                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                      <button 
-                        className="btn btn-primary btn-sm" 
-                        onClick={runQuery} 
-                        disabled={queryBusy || !sqlQuery.trim()}
-                        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px' }}
-                      >
-                        <Play size={12} className={queryBusy ? 'animate-spin' : ''} />
-                        {queryBusy ? 'Running Query...' : '⚡ Execute Query'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {queryError && (
-                    <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, color: 'var(--color-danger)', fontSize: '0.82rem', fontFamily: 'var(--font-mono)' }}>
-                      ❌ Error: {queryError}
-                    </div>
-                  )}
-
-                  {queryResults && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-success)' }}>
-                          ✓ Success: {queryResults.command} completed ({queryResults.rowCount !== null ? `${queryResults.rowCount} rows affected` : 'done'})
-                        </span>
-                      </div>
-
-                      {queryResults.rows && queryResults.rows.length > 0 ? (
-                        <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-surface-1)' }}>
-                          <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-                            <thead>
-                              <tr style={{ background: 'var(--color-surface-3)', borderBottom: '1px solid var(--color-border)' }}>
-                                {queryResults.fields.map(field => (
-                                  <th key={field} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                                    {field}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {queryResults.rows.map((row, idx) => (
-                                <tr key={idx} style={{ borderBottom: idx < queryResults.rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
-                                  {queryResults.fields.map(field => (
-                                    <td key={field} style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
-                                      {row[field] === null ? <em style={{ color: 'var(--color-text-muted)' }}>null</em> : String(row[field])}
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
+                    <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 420 }}>
+                      {tablesList.length === 0 ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontStyle: 'italic', padding: '10px 0' }}>No tables found / loading…</span>
                       ) : (
-                        <div style={{ padding: '16px', background: 'var(--color-surface-2)', borderRadius: 8, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
-                          Query returned 0 rows.
-                        </div>
+                        tablesList.map(table => (
+                          <button
+                            key={table}
+                            onClick={() => {
+                              const q = `SELECT * FROM "${table}" LIMIT 50;`
+                              setSqlQuery(q)
+                              // Run query automatically on click!
+                              setQueryBusy(true)
+                              setQueryError(null)
+                              setQueryResults(null)
+                              api.post(`/api/supabase/${project.id}/query`, { sql: q })
+                                .then(r => setQueryResults(r.data))
+                                .catch(e => setQueryError(e.response?.data?.error || e.message))
+                                .finally(() => setQueryBusy(false))
+                            }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 10px',
+                              borderRadius: 6,
+                              fontSize: '0.76rem',
+                              fontFamily: 'var(--font-mono)',
+                              textAlign: 'left',
+                              width: '100%',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--color-text-dim)',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                            onMouseEnter={e => {
+                              e.currentTarget.style.background = 'var(--color-surface-3)'
+                              e.currentTarget.style.color = 'var(--color-text)'
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.background = 'transparent'
+                              e.currentTarget.style.color = 'var(--color-text-dim)'
+                            }}
+                          >
+                            <FileCode size={11} color="var(--color-text-muted)" />
+                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{table}</span>
+                          </button>
+                        ))
                       )}
                     </div>
-                  )}
+                  </div>
+
+                  {/* Right Column - Editor and Results */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <h4 style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600 }}>⚡ SQL Editor</h4>
+                        <p style={{ margin: '2px 0 0', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Execute custom SQL commands directly on your Supabase PostgreSQL instance.</p>
+                      </div>
+                      
+                      {/* Pre-made helpers */}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        {[
+                          { name: '📋 List Tables', query: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';" },
+                          { name: '👥 List Users', query: "SELECT id, email, created_at FROM auth.users LIMIT 10;" },
+                          { name: '🛡️ Show RLS', query: "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';" }
+                        ].map(helper => (
+                          <button 
+                            key={helper.name} 
+                            className="btn btn-secondary btn-sm" 
+                            onClick={() => setSqlQuery(helper.query)}
+                            style={{ padding: '3px 8px', fontSize: '0.7rem' }}
+                          >
+                            {helper.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      <textarea 
+                        className="input" 
+                        value={sqlQuery} 
+                        onChange={e => setSqlQuery(e.target.value)} 
+                        style={{ 
+                          width: '100%', 
+                          height: 120, 
+                          fontFamily: 'var(--font-mono)', 
+                          fontSize: '0.8rem', 
+                          lineHeight: 1.5,
+                          background: 'var(--color-surface-2)',
+                          border: '1px solid var(--color-border)',
+                          borderRadius: 8,
+                          padding: 12,
+                          color: 'var(--color-text)',
+                          resize: 'vertical'
+                        }}
+                        placeholder="Enter your SQL query here..."
+                      />
+                      
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <button 
+                          className="btn btn-primary btn-sm" 
+                          onClick={runQuery} 
+                          disabled={queryBusy || !sqlQuery.trim()}
+                          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 16px' }}
+                        >
+                          <Play size={12} className={queryBusy ? 'animate-spin' : ''} />
+                          {queryBusy ? 'Running Query...' : '⚡ Execute Query'}
+                        </button>
+                      </div>
+                    </div>
+
+                    {queryError && (
+                      <div style={{ padding: '12px 16px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, color: 'var(--color-danger)', fontSize: '0.82rem', fontFamily: 'var(--font-mono)' }}>
+                        ❌ Error: {queryError}
+                      </div>
+                    )}
+
+                    {queryResults && (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--color-success)' }}>
+                            ✓ Success: {queryResults.command} completed ({queryResults.rowCount !== null ? `${queryResults.rowCount} rows affected` : 'done'})
+                          </span>
+                        </div>
+
+                        {queryResults.rows && queryResults.rows.length > 0 ? (
+                          <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 8, background: 'var(--color-surface-1)', maxHeight: 260 }}>
+                            <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
+                              <thead>
+                                <tr style={{ background: 'var(--color-surface-3)', borderBottom: '1px solid var(--color-border)' }}>
+                                  {queryResults.fields.map(field => (
+                                    <th key={field} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                      {field}
+                                    </th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {queryResults.rows.map((row, idx) => (
+                                  <tr key={idx} style={{ borderBottom: idx < queryResults.rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                                    {queryResults.fields.map(field => (
+                                      <td key={field} style={{ padding: '8px 12px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+                                        {row[field] === null ? <em style={{ color: 'var(--color-text-muted)' }}>null</em> : String(row[field])}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        ) : (
+                          <div style={{ padding: '16px', background: 'var(--color-surface-2)', borderRadius: 8, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                            Query returned 0 rows.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
 
