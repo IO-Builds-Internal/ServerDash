@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
-import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes } from 'lucide-react'
+import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes, Database } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
 
@@ -469,13 +469,15 @@ function Wizard({ onClose, onCreated }) {
 }
 
 // ── Main WebsitesPage ─────────────────────────────────────────────────────────
-const TYPE_COLORS = { static: '#3b82f6', proxy: '#8b5cf6', node: '#10b981', php: '#f59e0b', python: '#3776ab', flask: '#3776ab', 'no-nginx': '#6b7280' }
-const TYPE_LABELS = { static: 'Static / SPA', node: 'Node.js App', php: 'PHP / WP', python: 'Flask / Python', flask: 'Flask / Python', proxy: 'Reverse Proxy', 'no-nginx': 'No Nginx' }
+const TYPE_COLORS = { static: '#3b82f6', proxy: '#8b5cf6', node: '#10b981', php: '#f59e0b', python: '#3776ab', flask: '#3776ab', supabase: '#3ecf8e', system: '#d946ef', 'no-nginx': '#6b7280' }
+const TYPE_LABELS = { static: 'Static / SPA', node: 'Node.js App', php: 'WordPress / PHP', python: 'Flask / Python', flask: 'Flask / Python', supabase: 'Supabase Proxy', system: 'System Dashboard', proxy: 'Reverse Proxy', 'no-nginx': 'No Nginx' }
+const TYPE_ICONS = { static: Globe, supabase: Database, php: Boxes, node: Cpu, system: Server, proxy: ExternalLink, 'no-nginx': AlertTriangle }
 
 export default function WebsitesPage() {
   const navigate = useNavigate()
   const [sites, setSites] = useState([])
   const [loading, setLoading] = useState(true)
+  const [filterType, setFilterType] = useState('all')
   const [showWizard, setShowWizard] = useState(false)
   const [actionLoading, setActionLoading] = useState(false)
   const [actionTitle, setActionTitle] = useState('')
@@ -566,6 +568,16 @@ export default function WebsitesPage() {
     fileInput.click()
   }
 
+  const filteredSites = sites.filter(s => {
+    if (filterType === 'all') return true
+    if (filterType === 'system') return s.isSystemPanel
+    if (filterType === 'supabase') return s.type === 'supabase'
+    if (filterType === 'php') return s.type === 'php'
+    if (filterType === 'node') return s.type === 'node'
+    if (filterType === 'static') return s.type === 'static' && !s.isSystemPanel
+    return true
+  })
+
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       {showWizard && <Wizard onClose={() => setShowWizard(false)} onCreated={() => { setShowWizard(false); load() }} />}
@@ -584,6 +596,51 @@ export default function WebsitesPage() {
         </div>
       </div>
 
+      {/* Dynamic Filters */}
+      {!loading && sites.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, padding: '4px', background: 'var(--color-surface-2)', borderRadius: 10, width: 'fit-content', border: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
+          {[
+            { id: 'all', label: 'All Stack', icon: Globe, count: sites.length },
+            { id: 'supabase', label: 'Supabase Projects', icon: Database, count: sites.filter(s => s.type === 'supabase').length },
+            { id: 'php', label: 'WordPress / PHP', icon: Boxes, count: sites.filter(s => s.type === 'php').length },
+            { id: 'node', label: 'Node.js Apps', icon: Cpu, count: sites.filter(s => s.type === 'node').length },
+            { id: 'static', label: 'Static / HTML', icon: FileCode, count: sites.filter(s => s.type === 'static' && !s.isSystemPanel).length },
+            { id: 'system', label: 'System Panel', icon: Server, count: sites.filter(s => s.isSystemPanel).length }
+          ].map(tab => {
+            const isActive = filterType === tab.id
+            const Icon = tab.icon
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setFilterType(tab.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '6px 12px',
+                  fontSize: '0.8rem',
+                  fontWeight: isActive ? 600 : 500,
+                  borderRadius: 8,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: isActive ? 'var(--color-primary)' : 'transparent',
+                  color: isActive ? '#fff' : 'var(--color-text-muted)',
+                  transition: 'all 0.2s ease',
+                  opacity: tab.count === 0 ? 0.35 : 1,
+                  pointerEvents: tab.count === 0 ? 'none' : 'auto'
+                }}
+              >
+                <Icon size={13} />
+                <span>{tab.label}</span>
+                <span style={{ fontSize: '0.72rem', padding: '1px 5px', borderRadius: 4, background: isActive ? 'rgba(255,255,255,0.2)' : 'var(--color-surface-3)', color: isActive ? '#fff' : 'var(--color-text-dim)' }}>
+                  {tab.count}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)' }}>Loading…</div>
       ) : sites.length === 0 ? (
@@ -596,18 +653,23 @@ export default function WebsitesPage() {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: 16 }}>
-          {sites.map(site => (
+          {filteredSites.map(site => (
             <div key={site.id} className="glass-card card-hover" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16, position: 'relative', overflow: 'hidden' }}>
               
               {/* Card Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ 
-                    width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                    background: `${TYPE_COLORS[site.type] || '#6b7280'}1a`, color: TYPE_COLORS[site.type] || '#6b7280' 
-                  }}>
-                    <Globe size={18} />
-                  </div>
+                  {(() => {
+                    const IconComp = TYPE_ICONS[site.type] || Globe
+                    return (
+                      <div style={{ 
+                        width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                        background: `${TYPE_COLORS[site.type] || '#6b7280'}1a`, color: TYPE_COLORS[site.type] || '#6b7280' 
+                      }}>
+                        <IconComp size={18} />
+                      </div>
+                    )
+                  })()}
                   <div>
                     <div style={{ fontWeight: 700, fontSize: '1rem', color: 'var(--color-text)' }}>
                       {site.domain}

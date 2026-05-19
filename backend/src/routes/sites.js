@@ -247,11 +247,6 @@ function parseNginxConfig(content, filename) {
   const listen80 = content.includes('listen 80') || content.includes('listen [::]:80')
   const listen443 = content.includes('listen 443') || content.includes('listen [::]:443')
 
-  // Detect type
-  let type = 'static'
-  if (proxyPass) type = proxyPass.includes('php') ? 'php' : 'proxy'
-  else if (content.includes('php')) type = 'php'
-
   // Detect port from proxy_pass or named upstream
   let proxyPort = null
   if (proxyPass) {
@@ -270,6 +265,21 @@ function parseNginxConfig(content, filename) {
         }
       }
     }
+  }
+
+  // Detect type
+  let type = 'static'
+  if (proxyPass) {
+    const isSupabase = proxyPort === '8000' || proxyPort === '3000' || 
+                      proxyPass.includes('kong') || proxyPass.includes('studio') || 
+                      filename.includes('supabase') || serverName.some(n => n.includes('supabase'))
+    if (isSupabase) {
+      type = 'supabase'
+    } else {
+      type = 'node' // default reverse proxy is Node/App
+    }
+  } else if (content.includes('fastcgi_pass') || content.includes('php') || (root && fs.existsSync(path.join(root, 'wp-config.php')))) {
+    type = 'php' // PHP/WordPress
   }
 
   let primaryDomain = serverName[0] || filename
