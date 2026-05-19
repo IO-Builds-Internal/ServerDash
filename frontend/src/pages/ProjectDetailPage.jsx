@@ -107,6 +107,7 @@ server {
 
 const TABS = [
   { id: 'containers', label: 'Containers', icon: Layers },
+  { id: 'sql', label: '⚡ SQL Editor', icon: Code2 },
   { id: 'migrations', label: 'Migrations', icon: Database },
   { id: 'env', label: '.env Secrets', icon: Settings },
   { id: 'compose', label: 'Compose Spec', icon: FileText },
@@ -143,6 +144,38 @@ export default function ProjectDetailPage() {
   
   const migRef  = useRef(null)
   const logsRef = useRef(null)
+
+  const [sqlQuery, setSqlQuery] = useState("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';")
+  const [queryResults, setQueryResults] = useState(null)
+  const [queryError, setQueryError] = useState(null)
+  const [queryBusy, setQueryBusy] = useState(false)
+  const [tablesList, setTablesList] = useState([])
+
+  const runQuery = async () => {
+    setQueryBusy(true)
+    setQueryError(null)
+    setQueryResults(null)
+    try {
+      const { data } = await api.post(`/api/supabase/${id}/query`, { sql: sqlQuery })
+      setQueryResults(data)
+    } catch (e) {
+      setQueryError(e.response?.data?.error || e.message)
+    } finally {
+      setQueryBusy(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === 'sql') {
+      api.post(`/api/supabase/${id}/query`, { sql: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name;" })
+        .then(r => {
+          if (r.data?.rows) {
+            setTablesList(r.data.rows.map(row => row.table_name))
+          }
+        })
+        .catch(() => {})
+    }
+  }, [tab, id])
 
   // Load project info + detail
   useEffect(() => {
@@ -625,6 +658,178 @@ export default function ProjectDetailPage() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* SQL EDITOR TAB */}
+        {tab === 'sql' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 20, minHeight: 480 }}>
+            {/* Left Column - Schema Tables Explorer */}
+            <div style={{ background: 'var(--color-surface-2)', borderRadius: 10, padding: 16, border: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, borderBottom: '1px solid var(--color-border)', paddingBottom: 10 }}>
+                <Database size={15} color="var(--color-primary)" />
+                <span style={{ fontSize: '0.82rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--color-text)' }}>Tables Explorer</span>
+              </div>
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 420 }}>
+                {tablesList.length === 0 ? (
+                  <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontStyle: 'italic', padding: '10px 0' }}>No tables found / loading…</span>
+                ) : (
+                  tablesList.map(table => (
+                    <button
+                      key={table}
+                      onClick={() => {
+                        const q = `SELECT * FROM "${table}" LIMIT 50;`
+                        setSqlQuery(q)
+                        // Run query automatically on click!
+                        setQueryBusy(true)
+                        setQueryError(null)
+                        setQueryResults(null)
+                        api.post(`/api/supabase/${id}/query`, { sql: q })
+                          .then(r => setQueryResults(r.data))
+                          .catch(e => setQueryError(e.response?.data?.error || e.message))
+                          .finally(() => setQueryBusy(false))
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '6px 10px',
+                        borderRadius: 6,
+                        fontSize: '0.76rem',
+                        fontFamily: 'var(--font-mono)',
+                        textAlign: 'left',
+                        width: '100%',
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--color-text-dim)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.background = 'var(--color-surface-3)'
+                        e.currentTarget.style.color = 'var(--color-text)'
+                      }}
+                      onMouseLeave={e => {
+                        e.currentTarget.style.background = 'transparent'
+                        e.currentTarget.style.color = 'var(--color-text-dim)'
+                      }}
+                    >
+                      <FileText size={12} color="var(--color-text-muted)" />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{table}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Right Column - Editor and Results */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>⚡ SQL Query Console</h3>
+                  <p style={{ margin: '4px 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Execute custom SQL statements directly on your PostgreSQL database.</p>
+                </div>
+                
+                {/* Pre-made helpers */}
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {[
+                    { name: '📋 List Tables', query: "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';" },
+                    { name: '👥 List Users', query: "SELECT id, email, created_at FROM auth.users LIMIT 10;" },
+                    { name: '🛡️ Show RLS', query: "SELECT tablename, rowsecurity FROM pg_tables WHERE schemaname = 'public';" }
+                  ].map(helper => (
+                    <button 
+                      key={helper.name} 
+                      className="btn btn-secondary btn-sm" 
+                      onClick={() => setSqlQuery(helper.query)}
+                      style={{ padding: '4px 10px', fontSize: '0.74rem' }}
+                    >
+                      {helper.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <textarea 
+                  className="input" 
+                  value={sqlQuery} 
+                  onChange={e => setSqlQuery(e.target.value)} 
+                  style={{ 
+                    width: '100%', 
+                    height: 140, 
+                    fontFamily: 'var(--font-mono)', 
+                    fontSize: '0.82rem', 
+                    lineHeight: 1.5,
+                    background: 'var(--color-surface-2)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 10,
+                    padding: 14,
+                    color: 'var(--color-text)',
+                    resize: 'vertical'
+                  }}
+                  placeholder="Enter your PostgreSQL query here..."
+                />
+                
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={runQuery} 
+                    disabled={queryBusy || !sqlQuery.trim()}
+                    style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 18px', fontSize: '0.82rem' }}
+                  >
+                    <Play size={13} className={queryBusy ? 'animate-spin' : ''} />
+                    {queryBusy ? 'Running Query...' : '⚡ Execute Query'}
+                  </button>
+                </div>
+              </div>
+
+              {queryError && (
+                <div style={{ padding: '14px 18px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, color: 'var(--color-danger)', fontSize: '0.84rem', fontFamily: 'var(--font-mono)' }}>
+                  ❌ Query Execution Failed: {queryError}
+                </div>
+              )}
+
+              {queryResults && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-success)' }}>
+                      ✓ Success: {queryResults.command} completed ({queryResults.rowCount !== null ? `${queryResults.rowCount} rows affected` : 'done'})
+                    </span>
+                  </div>
+
+                  {queryResults.rows && queryResults.rows.length > 0 ? (
+                    <div style={{ overflowX: 'auto', border: '1px solid var(--color-border)', borderRadius: 10, background: 'var(--color-surface-1)', maxHeight: 300 }}>
+                      <table className="table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--color-surface-3)', borderBottom: '1px solid var(--color-border)' }}>
+                            {queryResults.fields.map(field => (
+                              <th key={field} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 700, color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                                {field}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {queryResults.rows.map((row, idx) => (
+                            <tr key={idx} style={{ borderBottom: idx < queryResults.rows.length - 1 ? '1px solid var(--color-border)' : 'none' }}>
+                              {queryResults.fields.map(field => (
+                                <td key={field} style={{ padding: '10px 14px', fontFamily: 'var(--font-mono)', color: 'var(--color-text)' }}>
+                                  {row[field] === null ? <em style={{ color: 'var(--color-text-muted)' }}>null</em> : String(row[field])}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '20px', background: 'var(--color-surface-2)', borderRadius: 10, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.82rem' }}>
+                      Query returned 0 rows.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )}
 
