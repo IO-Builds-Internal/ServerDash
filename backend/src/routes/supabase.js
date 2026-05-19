@@ -516,6 +516,19 @@ router.post('/:id/migrate', upload.single('migration'), async (req, res) => {
       { timeout: 300000 }
     )
     
+    // Save copy of executed migration file in the project's migrations directory
+    try {
+      const migDir = `${project.composePath}/migrations`
+      fs.mkdirSync(migDir, { recursive: true })
+      let targetName = req.file.originalname || `migration-${Date.now()}.sql`
+      if (targetName.endsWith('.zip')) {
+        targetName = targetName.replace(/\.zip$/, '.sql')
+      }
+      fs.copyFileSync(sqlPath, path.join(migDir, targetName))
+    } catch (e) {
+      logger.warn('Could not copy migration to project migrations folder', { error: e.message })
+    }
+
     try { fs.unlinkSync(req.file.path); if (sqlPath !== req.file.path) fs.unlinkSync(sqlPath) } catch {}
 
     if (result.code === 0) res.json({ success: true, output: result.stdout || 'Migration executed successfully' })
