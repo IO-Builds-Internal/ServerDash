@@ -637,8 +637,16 @@ server {
 }
 
 function ProxyModal({ project, onClose, onRefresh }) {
-  const [apiDomain, setApiDomain] = useState(`${project.name}.example.com`)
-  const [studioDomain, setStudioDomain] = useState(`${project.name}-studio.example.com`)
+  const getDomainFromUrl = (url, fallback) => {
+    if (!url) return fallback
+    if (url.includes('127.0.0.1') || url.includes('localhost') || /:\d+$/.test(url.replace('http://', '').replace('https://', ''))) {
+      return fallback
+    }
+    return url.replace('http://', '').replace('https://', '').trim()
+  }
+
+  const [apiDomain, setApiDomain] = useState(() => getDomainFromUrl(project.apiUrl, `${project.name}.example.com`))
+  const [studioDomain, setStudioDomain] = useState(() => getDomainFromUrl(project.studioUrl, `${project.name}-studio.example.com`))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
   const [successMsg, setSuccessMsg] = useState(null)
@@ -1038,18 +1046,35 @@ export default function SupabasePage() {
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <a href={p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.apiUrl}</a>
                         <CopyButton text={p.apiUrl} />
-                        <button 
-                          className="btn btn-secondary btn-sm" 
-                          onClick={() => setProxyProject(p)} 
-                          style={{ 
-                            padding: '3px 10px', 
-                            fontSize: '0.72rem', 
-                            border: (p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl)) ? '1px dashed var(--color-primary)' : '1px solid var(--color-border)',
-                            background: (p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl)) ? 'rgba(99,102,241,0.03)' : 'transparent'
-                          }}
-                        >
-                          <Globe size={11} /> Bind Domain / Proxy
-                        </button>
+                        {(() => {
+                          const isBound = !(p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl.replace('http://', '').replace('https://', '')))
+                          return (
+                            <button 
+                              className="btn btn-secondary btn-sm" 
+                              onClick={() => setProxyProject(p)} 
+                              style={{ 
+                                padding: '3px 10px', 
+                                fontSize: '0.72rem', 
+                                border: isBound ? '1px solid rgba(16,185,129,0.3)' : '1px dashed var(--color-primary)',
+                                background: isBound ? 'rgba(16,185,129,0.05)' : 'rgba(99,102,241,0.03)',
+                                color: isBound ? 'var(--color-success)' : 'var(--color-primary)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 4
+                              }}
+                            >
+                              {isBound ? (
+                                <>
+                                  <Check size={11} /> Bound (Modify)
+                                </>
+                              ) : (
+                                <>
+                                  <Globe size={11} /> Bind Domain / Proxy
+                                </>
+                              )}
+                            </button>
+                          )
+                        })()}
                       </div>
 
                       <span style={{ color: 'var(--color-text-muted)' }}>Anon Key</span>
