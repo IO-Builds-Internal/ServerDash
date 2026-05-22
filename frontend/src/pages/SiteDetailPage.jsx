@@ -8,8 +8,9 @@ import {
   Terminal, FileCode, RotateCcw, Save, Trash2, ExternalLink, 
   AlertTriangle, Wrench, Shield, Check, X, RefreshCw, Eye, EyeOff,
   GitBranch, GitCommit, GitPullRequest, Code, Settings, Plus, Key, Copy, HelpCircle,
-  Cpu, HardDrive, Lock, Database, Mail, Send
+  Cpu, HardDrive, Lock, Database, Mail, Send, Play
 } from 'lucide-react'
+import FilesPage from './FilesPage'
 
 export default function SiteDetailPage() {
   const { id } = useParams()
@@ -73,6 +74,14 @@ export default function SiteDetailPage() {
   const [actionLogs, setActionLogs] = useState([])
   const [showLogs, setShowLogs] = useState(false)
   const [actionBusy, setActionBusy] = useState(false)
+
+  // Isolated Terminal & Scripts state
+  const [terminalCmd, setTerminalCmd] = useState('')
+  const [siteTermLogs, setSiteTermLogs] = useState([])
+  const [siteTermRunning, setSiteTermRunning] = useState(false)
+  const siteTermRef = useRef()
+  const [siteScripts, setSiteScripts] = useState([])
+  const [scriptsLoading, setScriptsLoading] = useState(false)
 
   // Delete modal state
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -408,7 +417,57 @@ export default function SiteDetailPage() {
     loadBuildSettings()
     loadGit()
     loadMail()
+    loadScripts()
   }, [id])
+
+  const loadScripts = async () => {
+    setScriptsLoading(true)
+    try {
+      const r = await api.get(`/api/sites/${id}/scripts`)
+      setSiteScripts(r.data.scripts || [])
+    } catch (e) {} finally {
+      setScriptsLoading(false)
+    }
+  }
+
+  const runSiteCommand = async (cmd) => {
+    const commandToRun = cmd || terminalCmd
+    if (!commandToRun) return
+    
+    setSiteTermRunning(true)
+    if (!cmd) setTerminalCmd('')
+    setSiteTermLogs(prev => [...prev, `$ ${commandToRun}`])
+    
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/exec-stream?command=${encodeURIComponent(commandToRun)}`, {
+        headers: { Authorization: `Bearer ${localAuth.getToken() || ''}` }
+      })
+      const reader = resp.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split('\n')
+        buf = parts.pop()
+        parts.forEach(l => {
+          if (l.startsWith('data: ')) setSiteTermLogs(prev => [...prev, l.slice(6)])
+          else if (l.trim()) setSiteTermLogs(prev => [...prev, l])
+        })
+      }
+    } catch (e) {
+      setSiteTermLogs(prev => [...prev, `Error: ${e.message}`])
+    } finally {
+      setSiteTermRunning(false)
+    }
+  }
+
+  useEffect(() => {
+    if (siteTermRef.current) {
+      siteTermRef.current.scrollTo({ top: siteTermRef.current.scrollHeight, behavior: 'smooth' })
+    }
+  }, [siteTermLogs])
 
   useEffect(() => {
     if (termRef.current) {
@@ -595,6 +654,12 @@ export default function SiteDetailPage() {
       <div className="tabs" style={{ marginBottom: 20 }}>
         <button className={`tab ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}>
           Overview
+        </button>
+        <button className={`tab ${activeTab === 'files' ? 'active' : ''}`} onClick={() => setActiveTab('files')}>
+          Files
+        </button>
+        <button className={`tab ${activeTab === 'terminal' ? 'active' : ''}`} onClick={() => setActiveTab('terminal')}>
+          Terminal
         </button>
         {!site.isSystemPanel && (
           <>
@@ -1155,7 +1220,7 @@ export default function SiteDetailPage() {
                       readOnly 
                       className="input" 
                       style={{ fontSize:'0.75rem', fontFamily:'var(--font-mono)', padding:'8px 12px' }}
-                      value={`${window.location.protocol}//${window.location.hostname}:4001/api/sites/${id}/deploy`}
+                      value={`${window.location.protocol}//${window.location.hostname}:4001/api/sites/${id}/webhook`}
                     />
                     <button className="btn btn-secondary btn-sm" onClick={() => {
                       navigator.clipboard.writeText(`${window.location.protocol}//${window.location.hostname}:4001/api/sites/${id}/deploy`)
@@ -1599,6 +1664,87 @@ export default function SiteDetailPage() {
 
             </div>
 
+          </div>
+        )}
+
+        {/* TAB: FILES */}
+        {activeTab === 'files' && (
+          <div className="glass-card" style={{ height: '70vh', padding: 0, overflow: 'hidden' }}>
+            <FilesPage jailedPath={site.root} />
+          </div>
+        )}
+
+        {/* TAB: TERMINAL & SCRIPTS */}
+        {activeTab === 'terminal' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 20 }}>
+            {/* Terminal Panel */}
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Isolated Web Terminal</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+                  Run commands safely within {site.domain}'s root directory. Dangerous system commands are blocked.
+                </p>
+              </div>
+              <div 
+                ref={siteTermRef}
+                className="terminal" 
+                style={{ 
+                  borderRadius: 8, minHeight: 380, maxHeight: 500, overflowY: 'auto', 
+                  fontSize: '0.8rem', padding: 16, background: '#010409', color: '#cdd6f4', fontFamily: 'var(--font-mono)'
+                }}
+              >
+                {siteTermLogs.length === 0 ? (
+                  <div style={{ color: 'var(--color-text-muted)' }}>Terminal ready. Connected to {site.root}</div>
+                ) : (
+                  siteTermLogs.map((l, i) => (
+                    <div key={i} style={{ marginTop: 2, color: l.includes('BLOCKED:') || l.includes('Error:') ? '#f87171' : l.startsWith('$') ? '#60a5fa' : 'inherit' }}>
+                      {l}
+                    </div>
+                  ))
+                )}
+              </div>
+              <form onSubmit={e => { e.preventDefault(); runSiteCommand() }} style={{ display: 'flex', gap: 10 }}>
+                <input 
+                  type="text" 
+                  className="input" 
+                  style={{ flex: 1, fontFamily: 'var(--font-mono)' }} 
+                  placeholder="npm install, composer update, etc."
+                  value={terminalCmd}
+                  onChange={e => setTerminalCmd(e.target.value)}
+                  disabled={siteTermRunning}
+                />
+                <button type="submit" className="btn btn-primary" disabled={siteTermRunning || !terminalCmd.trim()}>
+                  {siteTermRunning ? <RefreshCw size={15} className="animate-spin" /> : <Terminal size={15} />}
+                  Run
+                </button>
+              </form>
+            </div>
+
+            {/* Scripts Panel */}
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Code size={18} color="var(--color-primary)"/> Executable Scripts
+              </h3>
+              {scriptsLoading ? (
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Scanning directory...</div>
+              ) : siteScripts.length === 0 ? (
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>No .sh scripts or package.json scripts found.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {siteScripts.map((sc, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, border: '1px solid var(--color-border)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        {sc.type === 'npm' ? <span style={{ color: '#cb3837', fontWeight: 700, fontSize: '0.7rem' }}>NPM</span> : <span style={{ color: '#f59e0b', fontWeight: 700, fontSize: '0.7rem' }}>SH</span>}
+                        <code style={{ fontSize: '0.8rem' }}>{sc.name}</code>
+                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={() => runSiteCommand(sc.command)} disabled={siteTermRunning}>
+                        <Play size={12} /> Run
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>

@@ -16,6 +16,12 @@ async function authMiddleware(req, res, next) {
   let token = ''
 
   const authHeader = req.headers.authorization
+  
+  // Allow unauthenticated access for webhooks
+  if (req.path.match(/^\/sites\/[^\/]+\/webhook$/)) {
+    return next()
+  }
+
   if (authHeader && authHeader.startsWith('Bearer ')) {
     token = authHeader.replace('Bearer ', '').trim()
   } else if (req.query.token) {

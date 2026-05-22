@@ -95,11 +95,11 @@ function RenameModal({ item, currentPath, onClose, onDone }) {
   )
 }
 
-export default function FilesPage({ initialPath }) {
+export default function FilesPage({ initialPath, jailedPath }) {
   const location = useLocation()
   const routerNavigate = useReactRouterNavigate()
   const backToSite = location.state?.backToSite
-  const [path, setPath] = useState(location.state?.path || initialPath || '/root')
+  const [path, setPath] = useState(location.state?.path || initialPath || (jailedPath ? jailedPath : '/root'))
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(new Set())
@@ -127,18 +127,28 @@ export default function FilesPage({ initialPath }) {
   useEffect(() => { load() }, [])
 
   const navigate = (dir) => {
-    const newPath = dir.startsWith('/') ? dir : `${path}/${dir}`.replace(/\/+/g, '/')
+    let newPath = dir.startsWith('/') ? dir : `${path}/${dir}`.replace(/\/+/g, '/')
+    if (jailedPath && !newPath.startsWith(jailedPath)) newPath = jailedPath
     load(newPath)
   }
 
   const goUp = () => {
     const parts = path.split('/').filter(Boolean)
     parts.pop()
-    load('/' + parts.join('/') || '/')
+    let newPath = '/' + parts.join('/') || '/'
+    if (jailedPath && !newPath.startsWith(jailedPath)) newPath = jailedPath
+    load(newPath)
   }
 
   const breadcrumbs = () => {
-    const parts = path.split('/').filter(Boolean)
+    let parts = path.split('/').filter(Boolean)
+    let rootPrefix = ''
+    if (jailedPath) {
+      const jailedParts = jailedPath.split('/').filter(Boolean)
+      parts = parts.slice(jailedParts.length)
+      rootPrefix = jailedPath
+      return [{ name: jailedPath, path: jailedPath }, ...parts.map((p, i) => ({ name: p, path: rootPrefix + '/' + parts.slice(0, i + 1).join('/') }))]
+    }
     return [{ name: '/', path: '/' }, ...parts.map((p, i) => ({ name: p, path: '/' + parts.slice(0, i + 1).join('/') }))]
   }
 
@@ -228,7 +238,7 @@ export default function FilesPage({ initialPath }) {
       <div className="glass-card" style={{ padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         {/* Breadcrumb */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 200, flexWrap: 'wrap' }}>
-          {path !== '/' && (
+          {path !== '/' && (!jailedPath || path !== jailedPath) && (
             <button onClick={goUp} className="btn btn-secondary btn-sm" title="Go up"><ArrowLeft size={13} /></button>
           )}
           {breadcrumbs().map((b, i, arr) => (
@@ -260,23 +270,25 @@ export default function FilesPage({ initialPath }) {
       </div>
 
       {/* Quick access shortcuts */}
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {[
-          { label: '🏠 /root', path: '/root' },
-          { label: '🌐 /var/www', path: '/var/www' },
-          { label: '⚙️ /etc/nginx', path: '/etc/nginx' },
-          { label: '📦 /opt', path: '/opt' },
-          { label: '🐳 /var/lib/docker', path: '/var/lib/docker' },
-          { label: '📁 /', path: '/' },
-          { label: '📝 /etc', path: '/etc' },
-          { label: '🗄️ /home', path: '/home' },
-        ].map(s => (
-          <button key={s.path} onClick={() => load(s.path)}
-            style={{ fontSize: '0.75rem', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: path === s.path ? 'rgba(59,130,246,0.15)' : 'var(--color-surface-2)', color: path === s.path ? 'var(--color-primary)' : 'var(--color-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
-            {s.label}
-          </button>
-        ))}
-      </div>
+      {!jailedPath && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {[
+            { label: '🏠 /root', path: '/root' },
+            { label: '🌐 /var/www', path: '/var/www' },
+            { label: '⚙️ /etc/nginx', path: '/etc/nginx' },
+            { label: '📦 /opt', path: '/opt' },
+            { label: '🐳 /var/lib/docker', path: '/var/lib/docker' },
+            { label: '📁 /', path: '/' },
+            { label: '📝 /etc', path: '/etc' },
+            { label: '🗄️ /home', path: '/home' },
+          ].map(s => (
+            <button key={s.path} onClick={() => load(s.path)}
+              style={{ fontSize: '0.75rem', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: path === s.path ? 'rgba(59,130,246,0.15)' : 'var(--color-surface-2)', color: path === s.path ? 'var(--color-primary)' : 'var(--color-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+      )}
       {showNewFolder && (
         <form onSubmit={createFolder} style={{ display: 'flex', gap: 8 }}>
           <input className="input" placeholder="Folder name" value={newFolderName} onChange={e => setNewFolderName(e.target.value)} autoFocus style={{ flex: 1 }} required />

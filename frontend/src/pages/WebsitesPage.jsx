@@ -267,17 +267,17 @@ function Wizard({ onClose, onCreated }) {
                   <div style={{ position: 'relative' }}>
                     <input className="input" value={gitUrl} onChange={e => { setGitUrl(e.target.value); setGitVisibility(null) }} onBlur={() => checkGitRepo(gitUrl)} placeholder="https://github.com/user/repo" style={{ paddingRight: 120 }} />
                     {gitCheckBusy && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Checking…</span>}
-                    {gitVisibility === 'public' && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: 4 }}><Unlock size={11} /> Public</span>}
-                    {gitVisibility === 'private' && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', gap: 4 }}><Lock size={11} /> Private</span>}
+                  {gitVisibility === 'public' && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: 4 }}><Unlock size={11} /> Public</span>}
+                    {(gitVisibility === 'private' || gitVisibility === 'unknown') && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', gap: 4 }}><Lock size={11} /> Private / Unknown</span>}
                   </div>
-                  {gitVisibility === 'private' && (
+                  {(gitVisibility === 'private' || gitVisibility === 'unknown') && (
                     <div style={{ marginTop: 12, padding: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 8 }}>
-                      <div style={{ fontSize: '0.8125rem', fontWeight: 600, marginBottom: 10, color: 'var(--color-warning)' }}>🔒 Private repository — enter access credentials</div>
+                      <div style={{ fontSize: '0.8125rem', fontWeight: 600, marginBottom: 10, color: 'var(--color-warning)' }}>🔒 Private repository detected (or unknown visibility). Enter credentials if required.</div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div><label className="label">GitHub Username</label><input className="input" value={gitUser} onChange={e => setGitUser(e.target.value)} placeholder="username" /></div>
+                        <div><label className="label">Git Username (or token name)</label><input className="input" value={gitUser} onChange={e => setGitUser(e.target.value)} placeholder="username" /></div>
                         <div><label className="label">Access Token / PAT</label><input className="input" type="password" value={gitToken} onChange={e => setGitToken(e.target.value)} placeholder="ghp_xxxxx" /></div>
                       </div>
-                      <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 8 }}>Generate at GitHub → Settings → Developer Settings → Personal Access Tokens</p>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 8 }}>Generate a Personal Access Token (PAT) from your Git provider (GitHub/GitLab/Bitbucket).</p>
                     </div>
                   )}
                   <div style={{ marginTop: 10 }}><label className="label">Branch</label><input className="input" value={gitBranch} onChange={e => setGitBranch(e.target.value)} placeholder="main" /></div>

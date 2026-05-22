@@ -297,7 +297,7 @@ function parseNginxConfig(content, filename) {
     ssl: sslCert,
     port: listen443 ? 443 : listen80 ? 80 : null,
     proxyPort,
-    root: root || null,
+    root: root || `/var/www/${primaryDomain}`,
     configFile: `/etc/nginx/sites-enabled/${filename}`,
     gitRepo: null,
     lastDeployed: null,
@@ -712,6 +712,79 @@ router.post('/:id/deploy', async (req, res) => {
     send(`✗ Error: ${err.message}`)
   }
   res.end()
+})
+// ── POST /api/sites/:id/webhook — GitHub/GitLab Auto CI/CD Webhook ────────────
+router.post('/:id/webhook', async (req, res) => {
+  const { id } = req.params
+
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) return res.status(404).json({ error: 'Site not found' })
+
+    const root = site.root || `/var/www/${site.domain}`
+
+    // Return 202 Accepted immediately so GitHub doesn't timeout
+    res.status(202).json({ message: 'Webhook received. Deployment triggered.' })
+
+    // Proceed with deployment asynchronously
+    ;(async () => {
+      try {
+        logger.info(`Webhook triggered deployment for ${site.domain}`)
+
+        if (fs.existsSync(path.join(root, '.git'))) {
+          logger.info(`[${site.domain}] git pull...`)
+          await execAsync(`cd "${root}" && git pull 2>&1`)
+        } else {
+          logger.warn(`[${site.domain}] Webhook received but no .git directory found.`)
+          return
+        }
+
+        let installCmd = 'npm install --production'
+        let buildCmd = 'npm run build'
+        let restartCmd = `pm2 restart "${site.domain}"`
+        let nodeVersion = 'system'
+
+        const metaPath = path.join(root, '.serverdash.json')
+        if (fs.existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+            if (meta.installCommand !== undefined) installCmd = meta.installCommand
+            if (meta.buildCommand !== undefined) buildCmd = meta.buildCommand
+            if (meta.restartCommand !== undefined) restartCmd = meta.restartCommand
+            if (meta.nodeVersion !== undefined) nodeVersion = meta.nodeVersion
+          } catch (e) {}
+        }
+
+        const prefix = nodeShellPrefix(nodeVersion)
+
+        if (fs.existsSync(path.join(root, 'package.json'))) {
+          if (installCmd && installCmd.trim()) {
+            logger.info(`[${site.domain}] ${installCmd}...`)
+            await execAsync(`cd "${root}" && ${prefix}${installCmd} 2>&1`)
+          }
+          if (buildCmd && buildCmd.trim()) {
+            logger.info(`[${site.domain}] ${buildCmd}...`)
+            await execAsync(`cd "${root}" && ${prefix}${buildCmd} 2>&1`)
+          }
+        }
+
+        if (restartCmd && restartCmd.trim()) {
+          logger.info(`[${site.domain}] ${restartCmd}...`)
+          await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+        }
+
+        logger.info(`[${site.domain}] Deployment completed successfully via webhook`)
+      } catch (err) {
+        logger.error(`[${site.domain}] Webhook deployment failed: ${err.message}`)
+      }
+    })()
+
+  } catch (err) {
+    // Only catch synchronous setup errors
+    logger.error(`Webhook error: ${err.message}`)
+    if (!res.headersSent) res.status(500).json({ error: 'Internal server error' })
+  }
 })
 
 // ── GET /api/sites/:id/env ────────────────────────────────────────────────────
@@ -1732,6 +1805,70 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+// ── GET /api/sites/:id/scripts ────────────────────────────────────────────────
+router.get('/:id/scripts', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+
+  const scripts = []
+  
+  // 1. Check for shell scripts
+  try {
+    const { stdout } = await execAsync(`find "${site.root}" -maxdepth 1 -name "*.sh" -type f`)
+    const shFiles = stdout.split('\n').filter(Boolean)
+    shFiles.forEach(f => {
+      const name = path.basename(f)
+      scripts.push({ name, command: `./${name}`, type: 'shell' })
+    })
+  } catch (e) {}
+
+  // 2. Parse package.json scripts
+  try {
+    const pkgPath = path.join(site.root, 'package.json')
+    if (fs.existsSync(pkgPath)) {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      if (pkg.scripts) {
+        Object.keys(pkg.scripts).forEach(key => {
+          scripts.push({ name: `npm run ${key}`, command: `npm run ${key}`, type: 'npm' })
+        })
+      }
+    }
+  } catch (e) {}
+
+  res.json({ scripts })
+})
+
+// ── GET /api/sites/:id/exec-stream ─────────────────────────────────────────────
+router.get('/:id/exec-stream', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).end()
+  
+  const { command } = req.query
+  if (!command) return res.status(400).end()
+
+  const blocked = [
+    'rm -rf /', 'dd if=/dev/zero', 'mkfs', '> /dev/sda', 'format c:',
+    'pm2 stop', 'pm2 delete', 'nginx', 'reboot', 'shutdown', 'systemctl', 'service', 'init 0', 'init 6'
+  ]
+  if (blocked.some(b => command.includes(b))) {
+    const send = sseSetup(res)
+    send(`✗ BLOCKED: Command contains prohibited keywords (${command})`)
+    send(`Exit: 1`)
+    return res.end()
+  }
+
+  const send = sseSetup(res)
+  send(`$ ${command}`)
+  
+  const { spawn } = require('child_process')
+  const child = spawn('/bin/bash', ['-c', `${command} 2>&1`], { cwd: site.root })
+  
+  child.stdout.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
+  child.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
+  child.on('close', code => { send(`Exit: ${code}`); res.end() })
+  req.on('close', () => child.kill())
 })
 
 module.exports = router
