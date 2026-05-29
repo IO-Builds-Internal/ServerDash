@@ -1010,14 +1010,29 @@ router.delete('/:id', async (req, res) => {
 
     if (!site) return res.status(404).json({ error: 'Site not found' })
 
-    // Only remove if we have an nginx config for it
-    if (site.configFile) {
+    // Purge Nginx configuration files
+    const configFiles = [
+      site.configFile,
+      `/etc/nginx/sites-enabled/${site.domain}`,
+      `/etc/nginx/sites-available/${site.domain}`,
+      `/etc/nginx/sites-enabled/${id}`,
+      `/etc/nginx/sites-available/${id}`,
+    ].filter(Boolean)
+
+    for (const file of configFiles) {
       try {
-        const realPath = fs.realpathSync(site.configFile)
-        try { await execAsync(`rm -f "${site.configFile}"`) } catch { }
-        try { await execAsync(`rm -f "${realPath}"`) } catch { }
+        if (fs.existsSync(file)) {
+          fs.unlinkSync(file)
+        }
+        // Fallback realpath check
+        try {
+          const real = fs.realpathSync(file)
+          if (fs.existsSync(real)) {
+            fs.unlinkSync(real)
+          }
+        } catch {}
       } catch (e) {
-        try { await execAsync(`rm -f "${site.configFile}"`) } catch { }
+        logger.warn('Failed to delete nginx config file', { file, error: e.message })
       }
     }
     
