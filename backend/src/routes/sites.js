@@ -270,7 +270,7 @@ function parseNginxConfig(content, filename) {
   // Detect type
   let type = 'static'
   if (proxyPass) {
-    const isSupabase = proxyPort === '8000' || proxyPort === '3000' || 
+    const isSupabase = proxyPort === '8000' || 
                       proxyPass.includes('kong') || proxyPass.includes('studio') || 
                       filename.includes('supabase') || serverName.some(n => n.includes('supabase'))
     if (isSupabase) {
