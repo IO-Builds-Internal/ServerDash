@@ -361,11 +361,15 @@ function getDatabaseCredentials(siteRoot) {
       const dbNameMatch = content.match(/Database:\s*([^\n]+)/)
       const dbUserMatch = content.match(/Database user:\s*([^\n]+)/)
       const dbPassMatch = content.match(/Database password:\s*([^\n]+)/)
+      const wpUserMatch = content.match(/Admin user:\s*([^\n]+)/)
+      const wpPassMatch = content.match(/Admin password:\s*([^\n]+)/)
       if (dbNameMatch || dbUserMatch || dbPassMatch) {
         return {
           dbName: dbNameMatch ? dbNameMatch[1].trim() : '',
           dbUser: dbUserMatch ? dbUserMatch[1].trim() : '',
           dbPass: dbPassMatch ? dbPassMatch[1].trim() : '',
+          wpUser: wpUserMatch ? wpUserMatch[1].trim() : '',
+          wpPass: wpPassMatch ? wpPassMatch[1].trim() : '',
           isWordPress: true
         }
       }

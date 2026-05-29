@@ -8,7 +8,7 @@ import {
   Terminal, FileCode, RotateCcw, Save, Trash2, ExternalLink, 
   AlertTriangle, Wrench, Shield, Check, X, RefreshCw, Eye, EyeOff,
   GitBranch, GitCommit, GitPullRequest, Code, Settings, Plus, Key, Copy, HelpCircle,
-  Cpu, HardDrive, Lock, Database, Mail, Send, Play
+  Cpu, HardDrive, Lock, Database, Mail, Send, Play, Boxes, Upload
 } from 'lucide-react'
 import FilesPage from './FilesPage'
 
@@ -90,6 +90,7 @@ export default function SiteDetailPage() {
 
   // Database password reset states
   const [showDbPassword, setShowDbPassword] = useState(false)
+  const [showWpPassword, setShowWpPassword] = useState(false)
   const [resettingDb, setResettingDb] = useState(false)
 
   const [dialog, setDialog] = useState(null)
@@ -887,6 +888,51 @@ export default function SiteDetailPage() {
                       </button>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* WordPress Admin Credentials Panel */}
+              {site?.database?.wpUser && site?.database?.wpPass && (
+                <div className="glass-card animate-fade-in" style={{ padding:24, display:'flex', flexDirection:'column', gap:18 }}>
+                  <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800, borderBottom:'1px solid var(--color-border)', paddingBottom:12, display:'flex', alignItems:'center', gap:8 }}>
+                    <Lock size={18} color="var(--color-primary)"/> WordPress Admin Access Credentials
+                  </h3>
+                  
+                  <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+                    <div style={{ gridColumn:'span 2' }}>
+                      <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>WP-Admin Login URL</div>
+                      <div style={{ display:'flex', gap:10, alignItems:'center', marginTop:6 }}>
+                        <a 
+                          href={site.isSystemPanel ? '/' : `${site.ssl ? 'https' : 'http'}://${site.domain}/wp-admin`} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          style={{ fontSize:'0.9rem', fontFamily:'var(--font-mono)', fontWeight:600, color:'var(--color-primary)', display:'flex', alignItems:'center', gap:6 }}
+                        >
+                          {site.ssl ? 'https' : 'http'}://{site.domain}/wp-admin <ExternalLink size={14}/>
+                        </a>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>Admin Username</div>
+                      <div style={{ fontSize:'0.9rem', marginTop:6, fontFamily:'var(--font-mono)', fontWeight:600 }}>{site.database.wpUser}</div>
+                    </div>
+                    
+                    <div>
+                      <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:6 }}>Admin Password</div>
+                      <div style={{ display:'flex', gap:10 }}>
+                        <input 
+                          type={showWpPassword ? "text" : "password"} 
+                          value={site.database.wpPass} 
+                          disabled 
+                          style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:'0.85rem', background:'rgba(255,255,255,0.01)', border:'1px solid var(--color-border)', borderRadius:8, padding:'8px 12px', color:'var(--color-text)' }} 
+                        />
+                        <button className="btn btn-secondary btn-sm" onClick={() => setShowWpPassword(!showWpPassword)} title={showWpPassword ? "Hide password" : "Show password"} style={{ padding:'0 12px' }}>
+                          {showWpPassword ? <EyeOff size={15}/> : <Eye size={15}/>}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 
