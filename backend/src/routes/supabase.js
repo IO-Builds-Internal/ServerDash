@@ -1431,36 +1431,6 @@ router.post('/:id/query', async (req, res) => {
   }
 })
 
-// ── POST /api/supabase/:id/start|stop|restart ─────────────────────────────────
-router.post('/:id/:action', async (req, res) => {
-  const { id, action } = req.params
-  const allProjects = loadProjects()
-  const project = allProjects.find(p => p.id === id)
-  if (!project) return res.status(404).json({ error: 'Project not found' })
-
-  try {
-    const composePath = project.composePath
-    const composeFile = `${composePath}/docker-compose.yml`
-    let cmd
-    if (action === 'start') {
-      // --no-wait: don't fail if analytics/logflare health check is slow
-      cmd = `docker compose -f ${composeFile} up -d --no-wait 2>&1`
-    } else if (action === 'stop') {
-      cmd = `docker compose -f ${composeFile} stop 2>&1`
-    } else if (action === 'restart') {
-      cmd = `docker compose -f ${composeFile} restart 2>&1`
-    } else {
-      return res.status(400).json({ error: `Unknown action: ${action}` })
-    }
-
-    const result = await ssh.exec(cmd, { ignoreErrors: true, timeout: 180000 })
-    const newStatus = action === 'start' ? 'running' : action === 'stop' ? 'stopped' : 'running'
-    saveProjects(allProjects.map(p => p.id === id ? { ...p, status: newStatus } : p))
-    res.json({ success: true, output: (result.stdout || '') + (result.stderr || '') })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
-  }
-})
 
 // Helper to determine functions directory
 const getFunctionsDir = (composePath) => {
@@ -1642,6 +1612,37 @@ router.post('/:id/restore', upload.single('restoreFile'), async (req, res) => {
     }
 
     res.json({ success: true, message: 'Database schema and contents successfully restored!' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/supabase/:id/start|stop|restart ─────────────────────────────────
+router.post('/:id/:action', async (req, res) => {
+  const { id, action } = req.params
+  const allProjects = loadProjects()
+  const project = allProjects.find(p => p.id === id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  try {
+    const composePath = project.composePath
+    const composeFile = `${composePath}/docker-compose.yml`
+    let cmd
+    if (action === 'start') {
+      // --no-wait: don't fail if analytics/logflare health check is slow
+      cmd = `docker compose -f ${composeFile} up -d --no-wait 2>&1`
+    } else if (action === 'stop') {
+      cmd = `docker compose -f ${composeFile} stop 2>&1`
+    } else if (action === 'restart') {
+      cmd = `docker compose -f ${composeFile} restart 2>&1`
+    } else {
+      return res.status(400).json({ error: `Unknown action: ${action}` })
+    }
+
+    const result = await ssh.exec(cmd, { ignoreErrors: true, timeout: 180000 })
+    const newStatus = action === 'start' ? 'running' : action === 'stop' ? 'stopped' : 'running'
+    saveProjects(allProjects.map(p => p.id === id ? { ...p, status: newStatus } : p))
+    res.json({ success: true, output: (result.stdout || '') + (result.stderr || '') })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
