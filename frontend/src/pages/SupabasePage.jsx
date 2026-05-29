@@ -1101,6 +1101,7 @@ export default function SupabasePage() {
   const [actionTitle, setActionTitle] = useState('')
   const [actionMessage, setActionMessage] = useState('')
   const [dialog, setDialog] = useState(null)
+  const [deleteProgress, setDeleteProgress] = useState(null) // null or { title: '', lines: [], active: true }
 
   const showSuccess = (title, message) => {
     setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
@@ -1123,17 +1124,44 @@ export default function SupabasePage() {
 
   const doAction = async (id, action) => {
     if (action === 'remove') {
+      const pName = projects.find(p => p.id === id)?.name || 'Project'
       setDialog({
         title: 'Delete Supabase Project?',
-        message: 'Are you sure you want to delete this Supabase project and all its database containers? This cannot be undone.',
+        message: `Are you sure you want to delete this Supabase project "${pName}" and all its database containers? This cannot be undone.`,
         type: 'confirm',
         onConfirm: async () => {
           setDialog(null)
+          setDeleteProgress({ title: `Deleting ${pName}`, lines: ['▶ Requesting project teardown...'], active: true })
           try {
-            await api.delete(`/api/supabase/${id}`)
+            const token = localAuth.getToken() || ''
+            const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/delete-stream`, {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${token}` }
+            })
+
+            if (!resp.ok) {
+              let errText = await resp.text()
+              try { errText = JSON.parse(errText).error || errText } catch {}
+              throw new Error(errText || `Teardown returned status ${resp.status}`)
+            }
+
+            const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
+            while (true) {
+              const { done: d, value } = await reader.read(); if (d) break
+              buf += dec.decode(value, { stream: true })
+              const parts = buf.split('\n')
+              buf = parts.pop()
+              parts.forEach(l => {
+                if (l.startsWith('data: ')) {
+                  const content = l.slice(6)
+                  setDeleteProgress(prev => prev ? { ...prev, lines: [...prev.lines, content] } : null)
+                }
+              })
+            }
+            setDeleteProgress(prev => prev ? { ...prev, active: false } : null)
             load()
           } catch (e) {
-            showError('Deletion Failed', e.response?.data?.error || e.message)
+            setDeleteProgress(prev => prev ? { ...prev, active: false, lines: [...prev.lines, `✗ Deletion Failed: ${e.message}`] } : null)
           }
         },
         onCancel: () => setDialog(null)
@@ -1483,6 +1511,55 @@ export default function SupabasePage() {
               {actionMessage || 'This operation may take several seconds. Please do not close or refresh this page.'}
             </p>
             <div className="progress-bar-indeterminate" style={{ marginTop: 8 }} />
+          </div>
+        </Overlay>
+      )}
+      {deleteProgress && (
+        <Overlay onClose={!deleteProgress.active ? () => setDeleteProgress(null) : undefined}>
+          <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 640, padding: 32, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {deleteProgress.active && <RefreshCw size={22} className="animate-spin" color="var(--color-danger)" />}
+              <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 900, color: 'var(--color-danger)' }}>{deleteProgress.title}</h3>
+            </div>
+            
+            <p style={{ margin: 0, fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+              Stack tearing down and volume pruning execution logs in real-time:
+            </p>
+
+            <div style={{ 
+              background: '#070708', 
+              border: '1px solid var(--color-border)', 
+              borderRadius: 10, 
+              padding: 16, 
+              height: 280, 
+              overflowY: 'auto', 
+              fontFamily: 'var(--font-mono)', 
+              fontSize: '0.74rem', 
+              lineHeight: 1.5,
+              color: '#a1a1aa'
+            }}>
+              {deleteProgress.lines.map((l, i) => {
+                let logColor = '#a1a1aa'
+                if (l.toLowerCase().includes('error') || l.toLowerCase().includes('fail') || l.startsWith('✗')) logColor = '#f87171'
+                else if (l.toLowerCase().includes('warn') || l.startsWith('⚠')) logColor = '#fbbf24'
+                else if (l.startsWith('✓') || l.toLowerCase().includes('success')) logColor = '#34d399'
+                else if (l.startsWith('▶')) logColor = '#60a5fa'
+                
+                return (
+                  <div key={i} style={{ color: logColor, marginBottom: 4 }}>
+                    {l}
+                  </div>
+                )
+              })}
+            </div>
+
+            {!deleteProgress.active && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <button className="btn btn-primary" onClick={() => setDeleteProgress(null)}>
+                  Close Logs
+                </button>
+              </div>
+            )}
           </div>
         </Overlay>
       )}

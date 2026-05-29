@@ -695,7 +695,38 @@ router.delete('/:id', async (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found (cannot delete builtin)' })
 
   try {
+    // 1. Terminate stack services and remove volumes
     await ssh.exec(`cd ${project.composePath} && docker compose down -v 2>&1`, { ignoreErrors: true, timeout: 60000 })
+    
+    // 2. Safely clean up any associated Nginx reverse proxy configurations
+    const cleanNginxProxy = (urlStr) => {
+      try {
+        if (!urlStr) return
+        const parsed = new URL(urlStr)
+        const domain = parsed.hostname
+        const isIP = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(domain)
+        if (domain && domain !== 'localhost' && !isIP) {
+          const availablePath = `/etc/nginx/sites-available/${domain}`
+          const enabledPath = `/etc/nginx/sites-enabled/${domain}`
+          
+          if (fs.existsSync(enabledPath)) fs.unlinkSync(enabledPath)
+          if (fs.existsSync(availablePath)) fs.unlinkSync(availablePath)
+          logger.info(`Automatically deleted Nginx configurations for domain proxy: ${domain}`)
+        }
+      } catch (e) {
+        logger.warn(`Failed to cleanup Nginx proxy for domain url ${urlStr}: ${e.message}`)
+      }
+    }
+
+    cleanNginxProxy(project.apiUrl)
+    cleanNginxProxy(project.studioUrl)
+
+    try {
+      execSync('nginx -t')
+      execSync('systemctl reload nginx')
+    } catch {}
+
+    // 3. Remove physical files and project settings registry record
     await ssh.exec(`rm -rf ${project.composePath}`, { ignoreErrors: true })
     saveProjects(projects.filter(p => p.id !== id))
     res.json({ success: true })
@@ -703,6 +734,83 @@ router.delete('/:id', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// ── POST /api/supabase/:id/delete-stream ─────────────────────────────────────
+router.post('/:id/delete-stream', async (req, res) => {
+  const { id } = req.params
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === id)
+  
+  const send = sseSetup(res)
+  if (!project) {
+    send('✗ Project not found')
+    return res.end()
+  }
+
+  try {
+    send('▶ Initiating stack deletion...')
+    
+    // 1. Terminate stack services and remove volumes
+    send('  Stopping active Docker containers and cleaning volumes...')
+    const downCmd = `cd ${project.composePath} && docker compose down -v 2>&1`
+    
+    const downResult = await ssh.exec(downCmd, { ignoreErrors: true, timeout: 60000 })
+    if (downResult.stdout) {
+      downResult.stdout.split('\n').filter(Boolean).slice(-10).forEach(l => send(`  ${l}`))
+    }
+    if (downResult.stderr) {
+      downResult.stderr.split('\n').filter(Boolean).slice(-10).forEach(l => send(`  ${l}`))
+    }
+    send('✓ Docker containers stopped and volumes removed')
+
+    // 2. Safely clean up any associated Nginx reverse proxy configurations
+    send('▶ Searching for associated Nginx reverse proxy configurations...')
+    const cleanNginxProxy = (urlStr) => {
+      try {
+        if (!urlStr) return
+        const parsed = new URL(urlStr)
+        const domain = parsed.hostname
+        const isIP = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(domain)
+        if (domain && domain !== 'localhost' && !isIP) {
+          send(`  Purging Nginx block files for domain: ${domain}`)
+          const availablePath = `/etc/nginx/sites-available/${domain}`
+          const enabledPath = `/etc/nginx/sites-enabled/${domain}`
+          
+          if (fs.existsSync(enabledPath)) fs.unlinkSync(enabledPath)
+          if (fs.existsSync(availablePath)) fs.unlinkSync(availablePath)
+          send(`✓ Deleted proxy configuration: ${domain}`)
+        }
+      } catch (e) {
+        send(`⚠ Failed to cleanup Nginx domain ${urlStr}: ${e.message}`)
+      }
+    }
+
+    cleanNginxProxy(project.apiUrl)
+    cleanNginxProxy(project.studioUrl)
+
+    send('  Validating Nginx configuration and reloading service...')
+    try {
+      execSync('nginx -t')
+      execSync('systemctl reload nginx')
+      send('✓ Nginx configuration successfully reloaded')
+    } catch (e) {
+      send(`⚠ Nginx reload warning: ${e.message}`)
+    }
+
+    // 3. Remove physical files and project settings registry record
+    send('▶ Cleaning up stack configuration files...')
+    await ssh.exec(`rm -rf ${project.composePath}`, { ignoreErrors: true })
+    send('✓ Project files deleted')
+
+    saveProjects(projects.filter(p => p.id !== id))
+    send('✓ Project registry record removed')
+    send('✓ Project deleted successfully!')
+  } catch (err) {
+    send(`✗ Deletion Error: ${err.message}`)
+  }
+  res.end()
+})
+
 
 // ── POST /api/supabase/register ───────────────────────────────────────────────
 // Register an existing Supabase install (e.g. /root/print_lankaDB) as a managed project
