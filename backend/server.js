@@ -1,5 +1,6 @@
 require('dotenv').config()
 const express = require('express')
+const pkg = require('./package.json')
 const cors = require('cors')
 const morgan = require('morgan')
 const rateLimit = require('express-rate-limit')
@@ -66,7 +67,7 @@ const execLimiter = rateLimit({
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'ok',
-    version: '1.0.0',
+    version: pkg.version || '1.3.0',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   })
