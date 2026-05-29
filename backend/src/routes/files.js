@@ -208,4 +208,48 @@ router.post('/move', async (req, res) => {
   else res.json({ success: true })
 })
 
+// POST /api/files/compress
+router.post('/compress', async (req, res) => {
+  const { paths, archiveName } = req.body
+  if (!paths || !Array.isArray(paths) || !archiveName) return res.status(400).json({ error: 'paths array and archiveName required' })
+  
+  if (paths.length === 0) return res.status(400).json({ error: 'At least one path required' })
+  const targetDir = path.dirname(paths[0])
+  const safeDst = path.normalize(path.join(targetDir, archiveName))
+  if (!isSafePath(safeDst)) return res.status(403).json({ error: 'Access denied' })
+
+  try {
+    const relativePaths = paths.map(p => {
+      const safeSrc = path.normalize(p)
+      if (!isSafePath(safeSrc)) throw new Error(`Access denied for path: ${p}`)
+      return path.basename(safeSrc)
+    })
+    const list = relativePaths.map(p => `"${p}"`).join(' ')
+    await execAsync(`cd "${targetDir}" && zip -r "${path.basename(safeDst)}" ${list}`)
+    logger.info('Archived files', { archive: safeDst, count: paths.length })
+    res.json({ success: true, archive: safeDst })
+  } catch (err) {
+    logger.error('Compression failed', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/files/extract
+router.post('/extract', async (req, res) => {
+  const { filePath } = req.body
+  if (!filePath) return res.status(400).json({ error: 'filePath required' })
+  const safeSrc = path.normalize(filePath)
+  if (!isSafePath(safeSrc)) return res.status(403).json({ error: 'Access denied' })
+
+  const targetDir = path.dirname(safeSrc)
+  try {
+    await execAsync(`unzip -o "${safeSrc}" -d "${targetDir}"`)
+    logger.info('Extracted ZIP archive', { archive: safeSrc, destination: targetDir })
+    res.json({ success: true, destination: targetDir })
+  } catch (err) {
+    logger.error('Extraction failed', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router

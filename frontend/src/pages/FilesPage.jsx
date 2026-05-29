@@ -3,7 +3,7 @@ import { useLocation, useNavigate as useReactRouterNavigate } from 'react-router
 import {
   Folder, File, ChevronRight, ChevronUp, Upload, Download,
   Trash2, Plus, Edit2, RefreshCw, X, Save, FolderPlus, Eye,
-  ArrowLeft, Search, Copy, Check, Scissors, Clipboard
+  ArrowLeft, Search, Copy, Check, Scissors, Clipboard, Archive
 } from 'lucide-react'
 import api from '../lib/api'
 import { localAuth } from '../lib/auth'
@@ -247,6 +247,31 @@ export default function FilesPage({ initialPath, jailedPath }) {
     }
   }
 
+  const compressSelected = async () => {
+    if (!selected.size) return
+    const archiveName = prompt('Enter name for the ZIP archive:', 'archive.zip')
+    if (!archiveName) return
+    
+    const pathsToCompress = [...selected].map(n => `${path}/${n}`.replace(/\/+/g, '/'))
+    try {
+      await api.post('/api/files/compress', { paths: pathsToCompress, archiveName })
+      load()
+    } catch (err) {
+      alert(`Compression failed: ${err.response?.data?.error || err.message}`)
+    }
+  }
+
+  const extractArchive = async (name) => {
+    if (!confirm(`Extract ZIP archive '${name}' in the current folder?`)) return
+    const filePath = `${path}/${name}`.replace(/\/+/g, '/')
+    try {
+      await api.post('/api/files/extract', { filePath })
+      load()
+    } catch (err) {
+      alert(`Extraction failed: ${err.response?.data?.error || err.message}`)
+    }
+  }
+
   const filtered = files.filter(f => !search || f.name.toLowerCase().includes(search.toLowerCase()))
   const dirs = filtered.filter(f => f.type === 'dir').sort((a, b) => a.name.localeCompare(b.name))
   const fls = filtered.filter(f => f.type !== 'dir').sort((a, b) => a.name.localeCompare(b.name))
@@ -319,6 +344,9 @@ export default function FilesPage({ initialPath, jailedPath }) {
                 <ChevronUp size={13} /> Move to Parent
               </button>
             )}
+            <button className="btn btn-secondary btn-sm animate-hover" onClick={compressSelected} style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="Compress selected items into a ZIP archive">
+              <Archive size={13} /> Zip Selected
+            </button>
             <button className="btn btn-danger btn-sm animate-hover" onClick={deleteSelected} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <Trash2 size={13} /> Delete ({selected.size})
             </button>
@@ -431,6 +459,11 @@ export default function FilesPage({ initialPath, jailedPath }) {
                       </td>
                       <td style={{ padding: '8px 16px' }}>
                         <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          {file.name.endsWith('.zip') && (
+                            <button onClick={() => extractArchive(file.name)} className="btn btn-secondary btn-sm animate-hover" title="Extract ZIP archive here" style={{ borderColor: 'rgba(16,185,129,0.35)', color: 'var(--color-success)' }}>
+                              <Archive size={12} />
+                            </button>
+                          )}
                           <button onClick={() => copyPath(file.name)} className="btn btn-secondary btn-sm" title="Copy path">
                             {copied === file.name ? <Check size={12} color="var(--color-success)" /> : <Copy size={12} />}
                           </button>
