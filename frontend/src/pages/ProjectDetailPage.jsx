@@ -5,7 +5,7 @@ import {
   Activity, Layers, Play, Square, RotateCcw, ArrowDown,
   RefreshCw, Upload, Globe, Server, Eye, EyeOff, Copy, Check,
   Cpu, HardDrive, Shield, AlertTriangle, Key, ExternalLink, Trash2,
-  Calendar, CheckCircle, Info, Plus
+  Calendar, CheckCircle, Info, Plus, Save
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
@@ -135,6 +135,13 @@ export default function ProjectDetailPage() {
   const [envError, setEnvError]     = useState('')
   const [revealAnonKey, setRevealAnonKey] = useState(false)
   
+  // Compose & env save state
+  const [savingEnv, setSavingEnv] = useState(false)
+  const [isEditingCompose, setIsEditingCompose] = useState(false)
+  const [editedCompose, setEditedCompose] = useState('')
+  const [savingCompose, setSavingCompose] = useState(false)
+  const [composeError, setComposeError] = useState('')
+
   const [newFnName, setNewFnName]   = useState('')
   const [selectedFns, setSelectedFns] = useState(new Set())
   const [fnBusy, setFnBusy]         = useState(null)
@@ -192,6 +199,12 @@ export default function ProjectDetailPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [id])
+
+  useEffect(() => {
+    if (detail?.composeContent) {
+      setEditedCompose(detail.composeContent)
+    }
+  }, [detail])
 
   useEffect(() => {
     if (logsRef.current) logsRef.current.scrollTop = logsRef.current.scrollHeight
@@ -265,8 +278,10 @@ export default function ProjectDetailPage() {
     if (selectedMigs.size === 0) return
     setActionBusy('migrate'); setActionMsg('')
     try {
+      // Sort migrations alphabetically/chronologically by their filenames
+      const sortedFiles = Array.from(selectedMigs).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
       const { data } = await api.post(`/api/supabase/${id}/migrations/run`, {
-        files: Array.from(selectedMigs)
+        files: sortedFiles
       })
       const fails = data.results.filter(r => !r.success)
       if (fails.length) setActionMsg(`⚠ ${fails.length} migrations failed. Check console for outputs.`)
@@ -276,6 +291,33 @@ export default function ProjectDetailPage() {
       setDetail(r.data)
     } catch (e) { setActionMsg(`✗ Execution failed: ${e.response?.data?.error || e.message}`) }
     setActionBusy(null)
+  }
+
+  const saveEnv = async () => {
+    if (!revealedEnv) return
+    setSavingEnv(true); setEnvError('')
+    try {
+      await api.put(`/api/supabase/${id}/env`, { content: revealedEnv })
+      setActionMsg('✓ Environment saved. Stack recreation triggered in background.')
+    } catch (e) {
+      setEnvError(e.response?.data?.error || e.message)
+    }
+    setSavingEnv(false)
+  }
+
+  const saveCompose = async () => {
+    if (!editedCompose) return
+    setSavingCompose(true); setComposeError('')
+    try {
+      await api.put(`/api/supabase/${id}/compose`, { content: editedCompose })
+      setActionMsg('✓ Compose blueprint saved. Stack rebuild triggered in background.')
+      setIsEditingCompose(false)
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setComposeError(e.response?.data?.error || e.message)
+    }
+    setSavingCompose(false)
   }
 
   const createFunction = async () => {
@@ -897,7 +939,21 @@ export default function ProjectDetailPage() {
             ) : (
               <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
                 <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Discovered Files ({detail.migrations.length})</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <input
+                      type="checkbox"
+                      checked={detail.migrations.length > 0 && selectedMigs.size === detail.migrations.length}
+                      onChange={() => {
+                        if (selectedMigs.size === detail.migrations.length) {
+                          setSelectedMigs(new Set())
+                        } else {
+                          setSelectedMigs(new Set(detail.migrations.map(m => m.name)))
+                        }
+                      }}
+                      style={{ cursor: 'pointer', width: 14, height: 14 }}
+                    />
+                    <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Select All ({detail.migrations.length})</span>
+                  </div>
                   {selectedMigs.size > 0 && <span style={{ fontSize: '0.82rem', color: 'var(--color-primary)', fontWeight: 700 }}>{selectedMigs.size} selected</span>}
                 </div>
                 
@@ -952,6 +1008,11 @@ export default function ProjectDetailPage() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  {revealedEnv && (
+                    <button className="btn btn-primary btn-sm" onClick={saveEnv} disabled={savingEnv} style={{ height: 32, gap: 6 }}>
+                      <Save size={14}/> {savingEnv ? 'Saving...' : 'Save & Recreate Stack'}
+                    </button>
+                  )}
                   {!revealedEnv ? (
                     <>
                       <input
@@ -982,23 +1043,45 @@ export default function ProjectDetailPage() {
               )}
 
               <div style={{ position: 'relative' }}>
-                <pre style={{
-                  margin: 0,
-                  padding: 20,
-                  background: 'var(--color-surface-2)',
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 10,
-                  fontSize: '0.78rem',
-                  fontFamily: 'var(--font-mono)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                  color: 'var(--color-text-dim)',
-                  lineHeight: 1.7,
-                  maxHeight: 500,
-                  overflowY: 'auto'
-                }}>
-                  {revealedEnv || detail?.envContent || 'Decryption credentials needed to render .env variables.'}
-                </pre>
+                {revealedEnv ? (
+                  <textarea
+                    value={revealedEnv}
+                    onChange={e => setRevealedEnv(e.target.value)}
+                    disabled={savingEnv}
+                    style={{
+                      width: '100%',
+                      height: 380,
+                      margin: 0,
+                      padding: 20,
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 10,
+                      fontSize: '0.78rem',
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--color-text)',
+                      lineHeight: 1.7,
+                      resize: 'vertical'
+                    }}
+                  />
+                ) : (
+                  <pre style={{
+                    margin: 0,
+                    padding: 20,
+                    background: 'var(--color-surface-2)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 10,
+                    fontSize: '0.78rem',
+                    fontFamily: 'var(--font-mono)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    color: 'var(--color-text-dim)',
+                    lineHeight: 1.7,
+                    maxHeight: 500,
+                    overflowY: 'auto'
+                  }}>
+                    {detail?.envContent || 'Decryption credentials needed to render .env variables.'}
+                  </pre>
+                )}
                 
                 {revealedEnv && (
                   <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -1019,32 +1102,81 @@ export default function ProjectDetailPage() {
                 <div>
                   <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Stack Orchestration Blueprint</h3>
                   <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-                    Read-only spec generated dynamically from the compose template.
+                    {isEditingCompose ? 'Modify stack services, configuration, and ports safely.' : 'Configuration blueprint generated dynamically from the compose template.'}
                   </p>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>docker-compose.yml</span>
-                  {detail?.composeContent && <CopyButton text={detail.composeContent} />}
+                  
+                  {isEditingCompose ? (
+                    <>
+                      <button className="btn btn-secondary btn-sm" onClick={() => { setIsEditingCompose(false); setEditedCompose(detail?.composeContent || '') }} disabled={savingCompose}>
+                        Cancel
+                      </button>
+                      <button className="btn btn-primary btn-sm" onClick={saveCompose} disabled={savingCompose || !editedCompose.trim()} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Save size={14}/> {savingCompose ? 'Rebuilding Stack...' : 'Save & Rebuild Stack'}
+                      </button>
+                    </>
+                  ) : (
+                    detail?.composeContent && (
+                      <>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setIsEditingCompose(true)}>
+                          Edit Spec
+                        </button>
+                        <CopyButton text={detail.composeContent} />
+                      </>
+                    )
+                  )}
                 </div>
               </div>
 
-              <pre style={{
-                margin: 0,
-                padding: 20,
-                background: 'var(--color-surface-2)',
-                border: '1px solid var(--color-border)',
-                borderRadius: 10,
-                fontSize: '0.78rem',
-                fontFamily: 'var(--font-mono)',
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-all',
-                color: '#22c55e',
-                lineHeight: 1.6,
-                maxHeight: 520,
-                overflowY: 'auto'
-              }}>
-                {detail?.composeContent || 'docker-compose.yml spec file is missing or not readable.'}
-              </pre>
+              {composeError && (
+                <div style={{ padding: '8px 12px', borderRadius: 6, fontSize: '0.8rem', background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)', color: 'var(--color-danger)', marginBottom: 16 }}>
+                  {composeError}
+                </div>
+              )}
+
+              <div style={{ position: 'relative' }}>
+                {isEditingCompose ? (
+                  <textarea
+                    value={editedCompose}
+                    onChange={e => setEditedCompose(e.target.value)}
+                    disabled={savingCompose}
+                    style={{
+                      width: '100%',
+                      height: 480,
+                      margin: 0,
+                      padding: 20,
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid var(--color-border)',
+                      borderRadius: 10,
+                      fontSize: '0.78rem',
+                      fontFamily: 'var(--font-mono)',
+                      color: 'var(--color-text)',
+                      lineHeight: 1.6,
+                      resize: 'vertical'
+                    }}
+                  />
+                ) : (
+                  <pre style={{
+                    margin: 0,
+                    padding: 20,
+                    background: 'var(--color-surface-2)',
+                    border: '1px solid var(--color-border)',
+                    borderRadius: 10,
+                    fontSize: '0.78rem',
+                    fontFamily: 'var(--font-mono)',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all',
+                    color: '#22c55e',
+                    lineHeight: 1.6,
+                    maxHeight: 520,
+                    overflowY: 'auto'
+                  }}>
+                    {detail?.composeContent || 'docker-compose.yml spec file is missing or not readable.'}
+                  </pre>
+                )}
+              </div>
             </div>
           </div>
         )}

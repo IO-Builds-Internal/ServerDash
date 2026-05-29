@@ -829,7 +829,48 @@ router.put('/:id/env', async (req, res) => {
     const envPath = `${project.composePath}/.env`
     fs.copyFileSync(envPath, `${envPath}.backup`)
     fs.writeFileSync(envPath, content, 'utf8')
-    res.json({ success: true })
+
+    // Trigger rebuild/restart in background to pick up the new env variables
+    const composeFile = `${project.composePath}/docker-compose.yml`
+    ssh.exec(`docker compose -f ${composeFile} up -d --no-wait 2>&1`, { ignoreErrors: true, timeout: 300000 })
+      .then(result => {
+        logger.info('Supabase stack auto-recreated after env edit', { id: project.id, output: result.stdout || result.stderr })
+      })
+      .catch(err => {
+        logger.error('Supabase stack auto-recreation failed after env edit', { id: project.id, error: err.message })
+      })
+
+    res.json({ success: true, message: 'Environment saved. Stack recreation triggered in background.' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── PUT /api/supabase/:id/compose ─────────────────────────────────────────────
+router.put('/:id/compose', async (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { content } = req.body
+  if (typeof content !== 'string') return res.status(400).json({ error: 'content required' })
+
+  try {
+    const composeFile = `${project.composePath}/docker-compose.yml`
+    // Backup current compose file
+    fs.copyFileSync(composeFile, `${composeFile}.backup`)
+    fs.writeFileSync(composeFile, content, 'utf8')
+
+    // Trigger rebuild/restart in background
+    ssh.exec(`docker compose -f ${composeFile} up -d --remove-orphans --no-wait 2>&1`, { ignoreErrors: true, timeout: 300000 })
+      .then(result => {
+        logger.info('Supabase stack auto-rebuilt after compose edit', { id: project.id, output: result.stdout || result.stderr })
+      })
+      .catch(err => {
+        logger.error('Supabase stack auto-rebuild failed after compose edit', { id: project.id, error: err.message })
+      })
+
+    res.json({ success: true, message: 'Compose file saved. Stack rebuild triggered in background.' })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
