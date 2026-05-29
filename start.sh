@@ -15,7 +15,13 @@ if [ -f "/root/ServerDash/backend/.env" ]; then
 fi
 
 # ── Detect public IP ──────────────────────────────────────────
-HOST_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
+HOST_IP=$(curl -4 -s --max-time 5 api.ipify.org 2>/dev/null)
+if [ -z "$HOST_IP" ]; then
+  HOST_IP=$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null)
+fi
+if [ -z "$HOST_IP" ]; then
+  HOST_IP=$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | grep -v '^172\.17\.' | head -n 1)
+fi
 if [ -z "$HOST_IP" ]; then
   HOST_IP=$(hostname -I | awk '{print $1}')
 fi

@@ -17,7 +17,13 @@ echo -e "\e[0m"
 
 # 1. Detect public IP address
 echo -e "🌐 Detecting public VPS IP address..."
-IP_ADDRESS=$(curl -s --max-time 5 ifconfig.me)
+IP_ADDRESS=$(curl -4 -s --max-time 5 api.ipify.org)
+if [ -z "$IP_ADDRESS" ]; then
+  IP_ADDRESS=$(curl -4 -s --max-time 5 ifconfig.me)
+fi
+if [ -z "$IP_ADDRESS" ]; then
+  IP_ADDRESS=$(hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | grep -v '^127\.' | grep -v '^172\.17\.' | head -n 1)
+fi
 if [ -z "$IP_ADDRESS" ]; then
   IP_ADDRESS=$(hostname -I | awk '{print $1}')
 fi
