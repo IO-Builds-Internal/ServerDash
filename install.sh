@@ -35,7 +35,7 @@ apt-get update -y
 
 # 3. Install Core Linux Dependencies
 echo -e "\n📦 Installing core dependencies (curl, git, nginx, python, pip, zip)..."
-apt-get install -y curl git nginx python3 python3-pip python3-venv zip unzip ufw
+apt-get install -y curl git nginx python3 python3-pip python3-venv zip unzip ufw certbot python3-certbot-nginx
 
 # 4. Install Node.js & NPM (LTS 20)
 if ! command -v node &> /dev/null; then
