@@ -44,6 +44,75 @@ function staticCacheBlock() {
     }`
 }
 
+/**
+ * Shared SPA detection: returns true if the project should be served as static
+ * files (built with Vite/CRA/Next export) rather than run as a live Node server.
+ *
+ * Rules:
+ *  1. If nodeSubtype is explicitly 'spa' → always SPA
+ *  2. If nodeSubtype is explicitly 'server' → never SPA (user knows best)
+ *  3. Otherwise auto-detect from package.json:
+ *     - Has Vite/CRA/Next in deps AND
+ *     - (no start script OR start script itself runs vite/react-scripts) AND
+ *     - No custom nodeStartCommand was provided by the user
+ */
+function detectIsSpa(pkgJson, nodeStartCommand, nodeSubtype) {
+  if (nodeSubtype === 'spa') return true
+  if (nodeSubtype === 'server') return false
+  try {
+    const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
+    const hasVite = !!deps.vite || !!(pkgJson.scripts?.dev || '').includes('vite')
+    const hasCra  = !!deps['react-scripts'] || !!(pkgJson.scripts?.start || '').includes('react-scripts')
+    const hasNextStatic = !!deps.next && !((pkgJson.scripts?.start || '').includes('next start'))
+    const hasNoStart = !pkgJson.scripts?.start
+    const startIsFrontend = pkgJson.scripts?.start &&
+      (pkgJson.scripts.start.includes('vite') || pkgJson.scripts.start.includes('react-scripts'))
+    const noUserStartCmd = !(nodeStartCommand && nodeStartCommand.trim())
+    return (hasVite || hasCra || hasNextStatic) && (hasNoStart || startIsFrontend) && noUserStartCmd
+  } catch {
+    return false
+  }
+}
+
+/**
+ * After starting a PM2 process, wait briefly then verify it is actually online.
+ * Returns { ok, status } where status is the pm2 status string.
+ */
+async function checkPm2Health(domain) {
+  try {
+    await new Promise(r => setTimeout(r, 2500))
+    const { stdout } = await execAsync(`pm2 jlist 2>/dev/null || echo '[]'`)
+    const list = JSON.parse(stdout.trim() || '[]')
+    const proc = list.find(p => p.name === domain)
+    if (!proc) return { ok: false, status: 'not found' }
+    return { ok: proc.pm2_env?.status === 'online', status: proc.pm2_env?.status || 'unknown' }
+  } catch {
+    return { ok: false, status: 'check failed' }
+  }
+}
+
+/**
+ * Resolve the best certbot contact email.
+ * Prefers an existing renewal conf email, then falls back to the
+ * server hostname-based email (never uses admin@{targetDomain} to
+ * avoid failures on domains with no MX record).
+ */
+function getCertbotEmail(domain) {
+  try {
+    const renewalConf = `/etc/letsencrypt/renewal/${domain}.conf`
+    if (fs.existsSync(renewalConf)) {
+      const m = fs.readFileSync(renewalConf, 'utf8').match(/^email\s*=\s*(.+)/m)
+      if (m) return m[1].trim()
+    }
+  } catch {}
+  try {
+    const { execSync } = require('child_process')
+    const hostname = execSync('hostname -f 2>/dev/null || hostname', { timeout: 3000 }).toString().trim()
+    return `ssl@${hostname}`
+  } catch {}
+  return 'ssl@localhost'
+}
+
 async function tryExec(command, send, label, options = {}) {
   try {
     const { stdout, stderr } = await execAsync(command, { timeout: options.timeout || 120000, maxBuffer: 1024 * 1024 * 10 })
@@ -1072,8 +1141,9 @@ router.post('/:id/ssl', async (req, res) => {
       // New cert — auto-detect account to avoid "choose an account" prompt
       const account = getCertbotAccount(domain)
       const accountFlag = account ? ` --account ${account}` : ''
+      const certEmail = getCertbotEmail(domain)
       const { stdout } = await execAsync(
-        `certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}${accountFlag} 2>&1`,
+        `certbot --nginx -d ${domain} --non-interactive --agree-tos -m ${certEmail}${accountFlag} 2>&1`,
         { timeout: 120000 }
       )
       output = stdout || 'SSL certificate installed'
@@ -1229,7 +1299,8 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
     nodeVersion='system',
     nodeInstallCommand='npm install',
     nodeBuildCommand='npm run build',
-    nodeStartCommand='npm start',
+    nodeStartCommand='',       // empty = user didn't explicitly provide one
+    nodeSubtype='',            // 'server' | 'spa' | '' (auto-detect)
     nodeOutputDir='',
     phpPreset='blank',
     phpVersion='8.2',
@@ -1288,79 +1359,80 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
       send('✓ .env file written')
     }
 
-    // --- Node.js: install/build/start with PM2 ──────────────────────────────
+    // --- Node.js: install → build → PM2 start ────────────────────────────────
+    // User explicitly selected "Node.js" in the wizard, so we ALWAYS run this
+    // as a server app with PM2. No SPA auto-detection — use "Static/SPA" type for that.
     if (type === 'node') {
-      // Detect if this is a static SPA (Vite, CRA, Next.js export) with no runtime server
-      let isSpa = false
       let pkgJson = {}
       const pkgPath = path.join(sitePath, 'package.json')
       if (fs.existsSync(pkgPath)) {
         try { pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) } catch {}
-        const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
-        const hasVite = !!deps.vite || !!(pkgJson.scripts?.dev || '').includes('vite')
-        const hasCra = !!deps['react-scripts'] || !!(pkgJson.scripts?.start || '').includes('react-scripts')
-        const hasNextStatic = !!deps.next && !((pkgJson.scripts?.start || '').includes('next start'))
-        const hasNoStartScript = !pkgJson.scripts?.start
-        const startIsFrontend = pkgJson.scripts?.start && (pkgJson.scripts.start.includes('vite') || pkgJson.scripts.start.includes('react-scripts'))
-        isSpa = (hasVite || hasCra || hasNextStatic) && (hasNoStartScript || startIsFrontend) && !(nodeStartCommand && nodeStartCommand.trim())
       }
 
-      if (isSpa) {
-        send('▶ Detected static SPA (Vite/CRA) — will build and serve as static files...')
-        const prefix = nodeShellPrefix(nodeVersion)
-        if (nodeInstallCommand && nodeInstallCommand.trim()) {
-          send(`${nodeInstallCommand}…`)
-          try {
-            const { stdout: installOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-            installOut.split('\n').filter(Boolean).slice(-8).forEach(l => send(l))
-          } catch (e) { send(`⚠ Install: ${e.message}`) }
-        }
-        const buildCmd = (nodeBuildCommand && nodeBuildCommand.trim()) ? nodeBuildCommand.trim() : 'npm run build'
-        send(`${buildCmd}…`)
-        try {
-          const { stdout: buildOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${buildCmd} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-          buildOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
-          send('✓ SPA build complete')
-        } catch (e) { send(`⚠ Build failed: ${e.message}`) }
-        // Switch effective type to static so nginx gets correct config below
-        // We set a flag and override the nginx block (handled in nginx config section)
+      const prefix = nodeShellPrefix(nodeVersion)
+
+      // ── Step 1: Install dependencies ────────────────────────────────────────
+      if (nodeInstallCommand && nodeInstallCommand.trim() && fs.existsSync(pkgPath)) {
+        send(`▶ ${nodeInstallCommand}…`)
+        const installResult = await tryExec(
+          `cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`,
+          send, 'npm install', { timeout: 240000, tail: 10 }
+        )
+        if (!installResult.ok) send('⚠ Install had warnings — continuing anyway')
+      }
+
+      // ── Step 2: Build (optional) ─────────────────────────────────────────────
+      if (nodeBuildCommand && nodeBuildCommand.trim()) {
+        send(`▶ ${nodeBuildCommand}…`)
+        await tryExec(
+          `cd ${shellQuote(sitePath)} && ${prefix}${nodeBuildCommand} 2>&1`,
+          send, 'build', { timeout: 300000, tail: 14 }
+        )
+        send('✓ Build complete')
+      }
+
+      // ── Step 3: Start with PM2 ───────────────────────────────────────────────
+      // Resolve start command: explicit user value → package.json start → file scan
+      const resolvedStartCmd = (nodeStartCommand && nodeStartCommand.trim())
+        ? nodeStartCommand.trim()
+        : pkgJson.scripts?.start
+          ? 'npm start'
+          : fs.existsSync(path.join(sitePath, 'server.js')) ? 'node server.js'
+          : fs.existsSync(path.join(sitePath, 'app.js'))    ? 'node app.js'
+          : fs.existsSync(path.join(sitePath, 'index.js'))  ? 'node index.js'
+          : null
+
+      if (!resolvedStartCmd) {
+        send('⚠ No start command found. Provide one in "Build & Start Settings" or add a "start" script to package.json.')
+        send('  Nginx proxy config will be written — start the app manually with PM2 once ready.')
+        send(`  Example: pm2 start app.js --name "${domain}"`)
       } else {
-        // True Node.js server — install, build, and PM2 start
-        if (fs.existsSync(pkgPath)) {
-          const prefix = nodeShellPrefix(nodeVersion)
-          if (nodeInstallCommand && nodeInstallCommand.trim()) {
-            send(`${nodeInstallCommand}…`)
-            try {
-              const { stdout: installOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-              installOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
-            } catch (e) { send(`⚠ Install: ${e.message}`) }
-          }
-          if (nodeBuildCommand && nodeBuildCommand.trim()) {
-            try {
-              send(`${nodeBuildCommand}…`)
-              const { stdout: buildOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeBuildCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-              buildOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
-              send('✓ Build complete')
-            } catch (e) { send(`⚠ Build command failed: ${e.message}`) }
-          }
-        }
         try {
           await execAsync(`pm2 delete ${shellQuote(domain)} 2>/dev/null || true`)
-          const prefix = nodeShellPrefix(nodeVersion)
-          const startCommand = nodeStartCommand && nodeStartCommand.trim()
-            ? nodeStartCommand.trim()
-            : pkgJson.scripts?.start
-              ? 'npm start'
-              : fs.existsSync(path.join(sitePath, 'server.js')) ? 'node server.js'
-              : fs.existsSync(path.join(sitePath, 'app.js')) ? 'node app.js'
-              : 'node index.js'
-          const pm2Command = `cd ${shellQuote(sitePath)} && PORT=${parseInt(port) || 3000} ${prefix}${startCommand}`
-          await execAsync(`pm2 start bash --name ${shellQuote(domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`, { timeout: 60000 })
+          const pm2Command = `cd ${shellQuote(sitePath)} && PORT=${parseInt(port) || 3000} ${prefix}${resolvedStartCmd}`
+          send(`▶ Starting PM2: ${resolvedStartCmd} (port ${port})`)
+          await execAsync(
+            `pm2 start bash --name ${shellQuote(domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`,
+            { timeout: 60000 }
+          )
           await execAsync('pm2 save 2>/dev/null || true')
-          send(`✓ PM2 started: ${domain} on port ${port}`)
-        } catch (e) { send(`⚠ PM2: ${e.message}`) }
+
+          // ── Health check — give the process 2.5s to crash or stabilize ──────
+          const health = await checkPm2Health(domain)
+          if (health.ok) {
+            send(`✓ PM2 is online: ${domain} → port ${port}`)
+          } else {
+            send(`⚠ PM2 status: "${health.status}" — app may have crashed at startup.`)
+            send(`  Run: pm2 logs ${domain} --lines 50`)
+            send(`  Common causes: wrong start command, missing .env, port conflict.`)
+          }
+        } catch (e) {
+          send(`⚠ PM2 error: ${e.message.split('\n').slice(0, 3).join(' | ')}`)
+          send(`  Nginx proxy config will still be written. Fix the issue and redeploy or start PM2 manually.`)
+        }
       }
     }
+
 
     // --- Python / Flask: virtualenv, pip packages, PM2 daemon running ────────────────────────
     if (type === 'python' || type === 'flask') {
@@ -1468,33 +1540,17 @@ if __name__ == '__main__':
       return base
     }
 
-    // Re-check SPA flag (set during node section above)
-    let isSpaForNginx = false
-    if (type === 'node') {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(sitePath, 'package.json'), 'utf8'))
-        const deps = { ...pkg.dependencies, ...pkg.devDependencies }
-        const hasVite = !!deps.vite || !!(pkg.scripts?.dev || '').includes('vite')
-        const hasCra = !!deps['react-scripts'] || !!(pkg.scripts?.start || '').includes('react-scripts')
-        const hasNextStatic = !!deps.next && !((pkg.scripts?.start || '').includes('next start'))
-        const hasNoStart = !pkg.scripts?.start
-        const startIsFrontend = pkg.scripts?.start && (pkg.scripts.start.includes('vite') || pkg.scripts.start.includes('react-scripts'))
-        isSpaForNginx = (hasVite || hasCra || hasNextStatic) && (hasNoStart || startIsFrontend) && !(nodeStartCommand && nodeStartCommand.trim())
-      } catch {}
-    }
-
+    // webRoot is only used for static/php file serving — node/python/proxy always use proxy_pass
     const webRoot = type === 'static'
       ? detectBuildDir(sitePath)
       : type === 'php'
         ? phpRoot
-        : isSpaForNginx
-          ? detectBuildDir(sitePath)
-          : requestedNodeOutput && fs.existsSync(requestedNodeOutput)
-            ? requestedNodeOutput
-            : sitePath
+        : requestedNodeOutput && fs.existsSync(requestedNodeOutput)
+          ? requestedNodeOutput
+          : sitePath
 
     let nginxConf
-    if ((type==='proxy' || type==='node' || type==='python' || type==='flask') && !isSpaForNginx) {
+    if (type === 'proxy' || type === 'node' || type === 'python' || type === 'flask') {
       nginxConf = `server {
     listen 80;
     listen [::]:80;
@@ -1555,10 +1611,19 @@ if __name__ == '__main__':
       try {
         const certbotAccount = getCertbotAccount(domain)
         const accountFlag = certbotAccount ? ` --account ${certbotAccount}` : ''
-        const { stdout: certOut } = await execAsync(`certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}${accountFlag} 2>&1`, { timeout: 120000 })
+        const certEmail = getCertbotEmail(domain)
+        send(`  Using contact email: ${certEmail}`)
+        const { stdout: certOut } = await execAsync(
+          `certbot --nginx -d ${domain} --non-interactive --agree-tos -m ${certEmail}${accountFlag} 2>&1`,
+          { timeout: 120000 }
+        )
         certOut.split('\n').filter(Boolean).forEach(l => send(l))
         send('✓ SSL certificate installed')
-      } catch (e) { send(`⚠ SSL failed: ${e.message}`) }
+      } catch (e) {
+        const errLines = e.message.split('\n').filter(Boolean)
+        errLines.slice(0, 5).forEach(l => send(`⚠ SSL: ${l}`))
+        send('  ⚠ SSL failed. Ensure your domain DNS points to this server\'s IP and Cloudflare proxy is paused.')
+      }
     }
 
     send('✓ Site deployment complete!')
