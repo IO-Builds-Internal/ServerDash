@@ -1578,10 +1578,10 @@ router.post('/:id/restore', upload.single('restoreFile'), async (req, res) => {
     const localPath = req.file.path
     const containerSqlPath = '/tmp/restore.sql'
 
-    // Find active database container name/id
+    // Find active database container name/id via docker compose
     const { stdout: containerId } = await ssh.exec(
-      `docker ps -qf "name=${project.id}-db" | head -1`,
-      { timeout: 10000 }
+      `cd ${project.composePath} && docker compose ps -q db | head -1`,
+      { timeout: 15000 }
     )
 
     const dbContainer = containerId.trim()
