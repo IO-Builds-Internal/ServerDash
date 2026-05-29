@@ -1023,6 +1023,28 @@ router.delete('/:id', async (req, res) => {
     
     if (deleteFiles) {
       const root = site.root || `/var/www/${site.domain || id}`
+      
+      // Clean up database if it's a WordPress site
+      try {
+        const credentials = getDatabaseCredentials(root)
+        if (credentials && credentials.dbName) {
+          logger.info('Cleaning up database for site during deletion', { domain: site.domain, dbName: credentials.dbName })
+          const sqlQueries = [
+            `DROP DATABASE IF EXISTS \`${credentials.dbName}\`;`,
+          ]
+          if (credentials.dbUser) {
+            sqlQueries.push(`DROP USER IF EXISTS '${credentials.dbUser}'@'localhost';`)
+          }
+          const sql = sqlQueries.join(' ')
+          const sqlFile = `/tmp/serverdash-wp-drop-${Date.now()}.sql`
+          fs.writeFileSync(sqlFile, sql, 'utf8')
+          await execAsync(`mysql -uroot < ${shellQuote(sqlFile)}`, { timeout: 30000 })
+          try { fs.unlinkSync(sqlFile) } catch {}
+        }
+      } catch (dbErr) {
+        logger.warn('Failed to drop database during site deletion', { error: dbErr.message })
+      }
+
       if (root.startsWith('/var/www/')) {
         // Kill any processes having open files inside the root directory to prevent "Directory not empty" lock
         try {
