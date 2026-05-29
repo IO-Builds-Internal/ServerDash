@@ -65,13 +65,13 @@ async function ensurePhpRuntime(version, send) {
   }
   send('Installing PHP-FPM packages...')
   const install = await tryExec(
-    `apt-get update 2>&1 && apt-get install -y php${version}-fpm php${version}-mysql php${version}-curl php${version}-gd php${version}-xml php${version}-mbstring php${version}-zip unzip curl mariadb-client 2>&1`,
+    `apt-get update 2>&1 && DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" php${version}-fpm php${version}-mysql php${version}-curl php${version}-gd php${version}-xml php${version}-mbstring php${version}-zip unzip curl mariadb-client 2>&1`,
     send,
     'PHP install',
     { timeout: 300000, tail: 18 }
   )
   if (!install.ok) {
-    await tryExec(`apt-get install -y php-fpm php-mysql php-curl php-gd php-xml php-mbstring php-zip unzip curl mariadb-client 2>&1`, send, 'fallback PHP install', { timeout: 300000, tail: 18 })
+    await tryExec(`DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" php-fpm php-mysql php-curl php-gd php-xml php-mbstring php-zip unzip curl mariadb-client 2>&1`, send, 'fallback PHP install', { timeout: 300000, tail: 18 })
   }
 }
 
@@ -83,7 +83,7 @@ async function ensureDatabaseService(send) {
   }
 
   send('▶ Installing/starting MariaDB for WordPress...')
-  await tryExec('apt-get update 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y mariadb-server mariadb-client php-mysql 2>&1', send, 'MariaDB install', { timeout: 300000, tail: 18 })
+  await tryExec('apt-get update 2>&1 && DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get install -y -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" mariadb-server mariadb-client php-mysql 2>&1', send, 'MariaDB install', { timeout: 300000, tail: 18 })
   await tryExec('systemctl enable --now mariadb 2>&1 || systemctl enable --now mysql 2>&1', send, 'MariaDB start', { timeout: 60000, tail: 8 })
 
   const finalPing = await tryExec('mysqladmin ping 2>&1', send, 'database ping', { timeout: 10000, tail: 4 })
@@ -598,6 +598,7 @@ router.post('/create', async (req, res) => {
 
     const nginxConf = type === 'proxy' || type === 'node' ? `server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     location / {
         proxy_pass http://localhost:${port};
@@ -609,6 +610,7 @@ router.post('/create', async (req, res) => {
     }
 }` : `server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     root ${sitePath}${type === 'static' ? '/dist' : ''};
     index index.html index.php;
@@ -1285,6 +1287,7 @@ if __name__ == '__main__':
     if (type==='proxy' || type==='node' || type==='python' || type==='flask') {
       nginxConf = `server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     location / {
         proxy_pass http://localhost:${port};
@@ -1301,6 +1304,7 @@ if __name__ == '__main__':
     } else {
       nginxConf = `server {
     listen 80;
+    listen [::]:80;
     server_name ${domain};
     root ${webRoot};
     index index.html${type==='php'?' index.php':''};
