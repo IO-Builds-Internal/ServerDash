@@ -7,57 +7,96 @@ echo "   ⚡ Starting ServerDash Panel Production Services ⚡"
 echo "=========================================================="
 echo -e "\e[0m"
 
-# Load active environment configurations if they exist
+# ── Load env ──────────────────────────────────────────────────
 if [ -f "/root/ServerDash/backend/.env" ]; then
-  export $(grep -v '^#' /root/ServerDash/backend/.env | xargs)
+  set -a
+  source /root/ServerDash/backend/.env
+  set +a
 fi
 
-# Detect public/host IP dynamically
-HOST_IP=$(curl -s --max-time 3 ifconfig.me)
+# ── Detect public IP ──────────────────────────────────────────
+HOST_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null)
 if [ -z "$HOST_IP" ]; then
   HOST_IP=$(hostname -I | awk '{print $1}')
 fi
 
-# 1. Build frontend dist if missing
-if [ ! -d "/root/ServerDash/frontend/dist" ] || [ ! -f "/root/ServerDash/frontend/dist/index.html" ]; then
-  echo "📦 Production assets missing. Compiling frontend now..."
+BACKEND_PORT="${PORT:-4001}"
+
+# ── 1. Build frontend if dist is missing ──────────────────────
+if [ ! -f "/root/ServerDash/frontend/dist/index.html" ]; then
+  echo "📦 Production assets missing. Compiling frontend..."
   cd /root/ServerDash/frontend && npm run build
+  echo "✅ Frontend built."
+else
+  echo "📦 Frontend dist already exists — skipping build."
 fi
 
-# 2. Sync to secure www-data accessible path
-echo "📂 Synchronizing static assets to secure web directory..."
+# ── 2. Sync assets to Nginx web root ──────────────────────────
+echo "📂 Syncing static assets to /var/www/serverdash/dist..."
 mkdir -p /var/www/serverdash/dist
-cp -r /root/ServerDash/frontend/dist/* /var/www/serverdash/dist/
+rsync -a --delete /root/ServerDash/frontend/dist/ /var/www/serverdash/dist/
 chown -R www-data:www-data /var/www/serverdash
 chmod -R 755 /var/www/serverdash
+echo "✅ Assets synced."
 
-# 3. Ensure Nginx config is enabled and restart Nginx
-echo "🌐 Re-establishing Nginx default routing gateway..."
+# ── 3. Ensure Nginx config is enabled ────────────────────────
+echo "🌐 Configuring Nginx..."
 ln -sf /etc/nginx/sites-available/serverdash /etc/nginx/sites-enabled/serverdash
-systemctl restart nginx
 
-# 4. Restart backend under PM2 Process Manager
-echo "⚡ Starting background Node server under PM2..."
+# Remove default conflicting config if present
+if [ -L /etc/nginx/sites-enabled/default ]; then
+  rm -f /etc/nginx/sites-enabled/default
+fi
+
+nginx -t && systemctl reload nginx || systemctl restart nginx
+echo "✅ Nginx running."
+
+# ── 4. Start backend under PM2 ───────────────────────────────
+echo "⚡ Starting Node.js backend under PM2..."
 cd /root/ServerDash/backend
-pm2 delete serverdash-backend &>/dev/null
-pm2 start server.js --name "serverdash-backend"
-pm2 save
 
-# Verify health status
-sleep 2
-BACKEND_OK=$(curl -s http://localhost:4001/api/health | grep -c '"status":"ok"')
-NGINX_OK=$(curl -Is http://localhost/ | head -n 1 | grep -c '200')
+# Stop old instance if running
+pm2 delete serverdash-backend &>/dev/null || true
+
+# Start fresh
+pm2 start server.js \
+  --name "serverdash-backend" \
+  --log /root/ServerDash/backend/logs/pm2.log \
+  --error /root/ServerDash/backend/logs/pm2-error.log \
+  --time
+
+pm2 save
+echo "✅ Backend started."
+
+# ── 5. Health verification ────────────────────────────────────
+echo ""
+echo "⏳ Waiting for services to come online..."
+sleep 10
+
+HEALTH_RESPONSE=$(curl -sf --max-time 5 "http://localhost:${BACKEND_PORT}/api/health" 2>/dev/null || echo "")
+if echo "$HEALTH_RESPONSE" | grep -q '"status":"ok"'; then
+  BACKEND_STATUS="\e[32mRUNNING\e[0m (Port ${BACKEND_PORT})"
+else
+  BACKEND_STATUS="\e[31mFAILED\e[0m — run: pm2 logs serverdash-backend"
+fi
+
+NGINX_STATUS=$(curl -s --max-time 5 -o /dev/null -w "%{http_code}" http://localhost/ 2>/dev/null || echo "000")
+if [[ "$NGINX_STATUS" =~ ^(200|301|302)$ ]]; then
+  NGINX_DISP="\e[32mRUNNING\e[0m (Port 80)"
+else
+  NGINX_DISP="\e[31mFAILED\e[0m — run: journalctl -u nginx --no-pager -n 20"
+fi
 
 echo -e "\n\e[32m"
 echo "=========================================================="
 echo "    🎉 SERVERDASH PANEL BOOTED SUCCESSFULLY! 🎉"
 echo "==========================================================\e[0m"
 echo ""
-echo -e "✅ Backend API:  $([ $BACKEND_OK -gt 0 ] && echo -e '\e[32mRUNNING\e[0m (Port 4001)' || echo -e '\e[31mFAILED\e[0m - Check pm2 logs serverdash-backend')"
-echo -e "✅ Nginx Server: $([ $NGINX_OK -gt 0 ] && echo -e '\e[32mRUNNING\e[0m (Port 80)' || echo -e '\e[31mFAILED\e[0m - Check journalctl -u nginx')"
+echo -e "✅ Backend API:  ${BACKEND_STATUS}"
+echo -e "✅ Nginx Server: ${NGINX_DISP}"
 echo ""
-echo -e "🌐 \e[1mPanel Access URL\e[0m:  \e[36mhttp://$HOST_IP\e[0m"
-echo -e "📧 \e[1mAdmin Username\e[0m:    \e[36m${ADMIN_EMAIL:-admin@serverdash.io}\e[0m"
-echo -e "🔑 \e[1mAdmin Password\e[0m:    \e[33m${ADMIN_PASSWORD:-(Loaded from env)}\e[0m"
+echo -e "🌐 \e[1mPanel URL\e[0m:       \e[36mhttp://$HOST_IP\e[0m"
+echo -e "🔐 \e[1mAdmin Email\e[0m:     \e[36m${ADMIN_EMAIL:-admin@serverdash.local}\e[0m"
+echo -e "🔑 \e[1mAdmin Password\e[0m:  \e[33m${ADMIN_PASSWORD:-(check /root/ServerDash/backend/.env)}\e[0m"
 echo "=========================================================="
 echo ""

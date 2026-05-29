@@ -230,6 +230,69 @@ router.post('/create-stream', upload.single('sqlBackup'), async (req, res) => {
     await ssh.exec(`cp -r ${REPO_PATH}/docker ${projectPath} 2>&1`)
     send('✓ Project directory created')
 
+    // ── Step 3.5: Apply Memory Limits & Healthcheck Optimizations to docker-compose.yml ──
+    send('▶ Applying Memory Limits & CPU Optimizations to docker-compose...')
+    try {
+      const yaml = require('yaml')
+      const composePath = `${projectPath}/docker-compose.yml`
+      const composeTxt = fs.readFileSync(composePath, 'utf8')
+      const doc = yaml.parseDocument(composeTxt)
+      
+      const services = doc.get('services')
+      
+      for (const item of services.items) {
+        const serviceName = item.key.value
+        const service = item.value
+        
+        let memoryLimit = '256M'
+        if (serviceName === 'db') memoryLimit = '1024M'
+        else if (serviceName === 'analytics') memoryLimit = '384M'
+        else if (serviceName === 'studio') memoryLimit = '256M'
+        else if (serviceName === 'vector') memoryLimit = '128M'
+        else if (serviceName === 'logflare') memoryLimit = '384M'
+        else if (serviceName === 'meta') memoryLimit = '256M'
+        else if (serviceName === 'storage') memoryLimit = '256M'
+        
+        service.set('deploy', doc.createNode({
+          resources: {
+            limits: {
+              memory: memoryLimit
+            }
+          }
+        }))
+
+        // Optimize healthcheck to reduce CPU overhead
+        const healthcheck = service.get('healthcheck')
+        if (healthcheck) {
+          healthcheck.set('interval', '30s')
+          healthcheck.set('timeout', '10s')
+          healthcheck.set('retries', 3)
+          healthcheck.set('start_period', '60s')
+        }
+
+        // Optional: Also add Postgres optimizations for db container
+        if (serviceName === 'db') {
+          const commandList = [
+            "postgres",
+            "-c", "config_file=/etc/postgresql/postgresql.conf",
+            "-c", "log_min_messages=fatal",
+            "-c", "shared_buffers=128MB",
+            "-c", "work_mem=4MB",
+            "-c", "effective_cache_size=512MB",
+            "-c", "max_connections=60",
+            "-c", "maintenance_work_mem=64MB"
+          ]
+          service.set('command', doc.createNode(commandList))
+        }
+      }
+      
+      fs.writeFileSync(composePath, doc.toString())
+      send('✓ Memory limits & CPU optimizations applied')
+    } catch (e) {
+      console.error("Failed to apply limits & CPU optimizations:", e)
+      send('⚠ Failed to apply limits & CPU optimizations')
+    }
+
     // ── Step 4: Allocate ports ─────────────────────────────────────────────────
     send('▶ Allocating ports...')
     const reserved = getAllProjectPorts()
@@ -441,12 +504,15 @@ router.post('/create-stream', upload.single('sqlBackup'), async (req, res) => {
     send(`✗ Error: ${err.message}`)
     logger.error('Supabase create error', { error: err.message })
     // Cleanup on failure
+    send('  Cleaning up failed project...')
+    try {
+      // Force tear down using project name to ensure no orphaned docker objects remain
+      await ssh.exec(`docker compose -p ${projectId} down -v 2>&1`, { ignoreErrors: true, timeout: 60000 })
+    } catch {}
     if (fs.existsSync(projectPath)) {
-      send('  Cleaning up failed project...')
-      await ssh.exec(`cd ${projectPath} && docker compose down -v 2>&1`, { ignoreErrors: true })
       await ssh.exec(`rm -rf ${projectPath}`, { ignoreErrors: true })
-      send('  Cleanup done')
     }
+    send('  Cleanup done')
   }
   res.end()
 })

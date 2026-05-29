@@ -12,7 +12,7 @@ const addField = (name, value) => {
   body += `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
 };
 
-addField('name', 'testptojectone');
+addField('name', 'testproject-limits');
 addField('dbPassword', 'testpassword123');
 addField('dashPassword', 'testdashpass123');
 

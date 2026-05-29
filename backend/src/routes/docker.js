@@ -9,6 +9,11 @@ const axios = require('axios')
 
 const docker = new Docker({ socketPath: '/var/run/docker.sock' })
 
+// Cache docker container list for 10 seconds to avoid blocking on slow docker ps
+let containerCache = null
+let containerCacheTime = 0
+const CONTAINER_CACHE_TTL = 10000
+
 function sseSetup(res) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -21,22 +26,14 @@ function sseSetup(res) {
 // ── GET /api/docker/containers ──────────────────────────────────────────────────
 router.get('/containers', async (req, res) => {
   try {
-    const containers = await docker.listContainers({ all: true })
-    const withStats = await Promise.all(containers.map(async (c) => {
-      let cpu = 0, memory = 0
-      if (c.State === 'running') {
-        try {
-          const container = docker.getContainer(c.Id)
-          const stats = await container.stats({ stream: false })
-          const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage
-          const sysDelta = (stats.cpu_stats.system_cpu_usage || 1) - (stats.precpu_stats.system_cpu_usage || 0)
-          const numCpu = stats.cpu_stats.online_cpus || 1
-          cpu = sysDelta > 0 ? parseFloat(((cpuDelta / sysDelta) * numCpu * 100).toFixed(2)) : 0
-          memory = parseFloat((stats.memory_stats.usage / 1024 / 1024).toFixed(1))
-        } catch { }
-      }
+    // Serve from cache if fresh (avoids blocking on slow docker ps with many containers)
+    if (containerCache && Date.now() - containerCacheTime < CONTAINER_CACHE_TTL) {
+      return res.json(containerCache)
+    }
 
-      // Extract compose project from labels
+    const containers = await docker.listContainers({ all: true })
+
+    const result = containers.map((c) => {
       const labels = c.Labels || {}
       const composeProject = labels['com.docker.compose.project'] || null
       const composeService = labels['com.docker.compose.service'] || null
@@ -53,22 +50,50 @@ router.get('/containers', async (req, res) => {
           .filter((v, i, a) => a.indexOf(v) === i) || [],
         composeProject,
         composeService,
-        cpu,
-        memory,
+        cpu: 0,     // fetched lazily via /:id/stats
+        memory: 0,  // fetched lazily via /:id/stats
         created: new Date(c.Created * 1000).toISOString(),
       }
-    }))
+    })
 
     // Sort: running first, then by project
-    withStats.sort((a, b) => {
+    result.sort((a, b) => {
       if (a.status !== b.status) return a.status === 'running' ? -1 : 1
       return (a.composeProject || '').localeCompare(b.composeProject || '')
     })
 
-    res.json(withStats)
+    // Cache result
+    containerCache = result
+    containerCacheTime = Date.now()
+
+    res.json(result)
   } catch (err) {
     logger.error('Docker list error', { error: err.message })
     res.status(500).json({ error: err.message })
+  }
+})
+
+// ── GET /api/docker/:id/stats ──────────────────────────────────────────────────
+router.get('/:id/stats', async (req, res) => {
+  try {
+    const { id } = req.params
+    const containers = await docker.listContainers({ all: true })
+    const found = containers.find(c =>
+      c.Id.startsWith(id) || c.Names.some(n => n.replace(/^\//, '') === id)
+    )
+    if (!found || found.State !== 'running') {
+      return res.json({ cpu: 0, memory: 0 })
+    }
+    const container = docker.getContainer(found.Id)
+    const stats = await container.stats({ stream: false })
+    const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - stats.precpu_stats.cpu_usage.total_usage
+    const sysDelta = (stats.cpu_stats.system_cpu_usage || 1) - (stats.precpu_stats.system_cpu_usage || 0)
+    const numCpu = stats.cpu_stats.online_cpus || 1
+    const cpu = sysDelta > 0 ? parseFloat(((cpuDelta / sysDelta) * numCpu * 100).toFixed(2)) : 0
+    const memory = parseFloat((stats.memory_stats.usage / 1024 / 1024).toFixed(1))
+    res.json({ cpu, memory })
+  } catch (err) {
+    res.json({ cpu: 0, memory: 0 })
   }
 })
 
@@ -130,6 +155,63 @@ router.post('/compose', async (req, res) => {
     const { stdout } = await execAsync(`cd ${dir} && docker compose up -d 2>&1`)
     res.json({ success: true, output: stdout })
   } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/docker/stacks/:name/stop ──────────────────────────────────────────
+router.post('/stacks/:name/stop', async (req, res) => {
+  const { name } = req.params
+  try {
+    logger.info(`Stopping docker stack: ${name}`)
+    const { stdout } = await execAsync(`docker compose -p ${name} stop 2>&1`)
+    res.json({ success: true, output: stdout })
+  } catch (err) {
+    logger.error(`Error stopping stack ${name}`, { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── DELETE /api/docker/stacks/:name ─────────────────────────────────────────────
+router.delete('/stacks/:name', async (req, res) => {
+  const { name } = req.params
+  try {
+    logger.info(`Deleting docker stack: ${name}`)
+    
+    // 1. Tear down containers, volumes, networks
+    const { stdout } = await execAsync(`docker compose -p ${name} down -v 2>&1`)
+    
+    // 2. Clean up files if they exist in ServerDash directories
+    const fs = require('fs')
+    const pathsToClean = [
+      `/opt/supabase-projects/${name}`,
+      `/opt/compose/${name}`
+    ]
+    for (const p of pathsToClean) {
+      if (fs.existsSync(p)) {
+        logger.info(`Removing stack directory: ${p}`)
+        fs.rmSync(p, { recursive: true, force: true })
+      }
+    }
+
+    // 3. Remove from Supabase .projects.json if registered there
+    try {
+      const PROJECTS_FILE = '/opt/supabase-projects/.projects.json'
+      if (fs.existsSync(PROJECTS_FILE)) {
+        const projects = JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'))
+        const filtered = projects.filter(p => p.name !== name && p.id !== name)
+        if (projects.length !== filtered.length) {
+          fs.writeFileSync(PROJECTS_FILE, JSON.stringify(filtered, null, 2))
+          logger.info(`Removed stack ${name} from .projects.json`)
+        }
+      }
+    } catch (e) {
+      logger.warn(`Could not clean up .projects.json for stack ${name}`, { error: e.message })
+    }
+
+    res.json({ success: true, output: stdout })
+  } catch (err) {
+    logger.error(`Error deleting stack ${name}`, { error: err.message })
     res.status(500).json({ error: err.message })
   }
 })

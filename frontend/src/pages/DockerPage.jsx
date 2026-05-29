@@ -389,6 +389,32 @@ export default function DockerPage() {
     }
   }
 
+  const stopStack = async (projectName) => {
+    if (!confirm(`Are you sure you want to stop all containers in the stack: ${projectName}?`)) return
+    setLoading(true)
+    try {
+      await api.post(`/api/docker/stacks/${projectName}/stop`)
+      load()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const deleteStack = async (projectName) => {
+    if (!confirm(`⚠️ CRITICAL WARNING ⚠️\n\nThis will completely STOP and DELETE all containers, VOLUMES, and networks in the "${projectName}" stack.\n\nALL DATA IN THIS STACK WILL BE PERMANENTLY LOST.\n\nAre you absolutely sure you want to delete this stack?`)) return
+    setLoading(true)
+    try {
+      await api.delete(`/api/docker/stacks/${projectName}`)
+      load()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const filtered = containers.filter(c => 
     !search || 
     c.name.toLowerCase().includes(search.toLowerCase()) || 
@@ -524,6 +550,26 @@ export default function DockerPage() {
                   }}>
                     {runningCount}/{ctrs.length} Active Services
                   </span>
+
+                  {project !== 'standalone' && (
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }} onClick={e => e.stopPropagation()}>
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        onClick={() => stopStack(project)}
+                        disabled={runningCount === 0}
+                      >
+                        <Square size={12} /> Stop Stack
+                      </button>
+                      <button
+                        className="btn btn-danger btn-sm"
+                        style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        onClick={() => deleteStack(project)}
+                      >
+                        <Trash2 size={12} /> Delete Stack
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {!isCollapsed && (

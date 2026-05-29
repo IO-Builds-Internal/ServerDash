@@ -14,6 +14,7 @@ const BACKGROUND_SAMPLE_MS = 5000
 // Store previous network readings to calculate per-second rates
 let prevNet = null
 let prevNetTime = null
+let prevCpuStat = null   // for /proc/stat delta CPU measurement
 let historyCache = null
 let lastHistoryWrite = 0
 let latestMetrics = null
@@ -56,13 +57,24 @@ function appendHistory(sample) {
   saveHistory(history)
 }
 
-function parseCpu(topOutput) {
-  const line = topOutput.split('\n').find(l => l.includes('%Cpu') || l.includes('Cpu(s)'))
-  if (!line) return 0
-  const idle = line.match(/(\d+\.?\d*)\s*(?:id|idle)/)
-  if (idle) return parseFloat((100 - parseFloat(idle[1])).toFixed(1))
-  const us = line.match(/(\d+\.?\d*)\s*us/)
-  return us ? parseFloat(us[1]) : 0
+// Read /proc/stat CPU line and return {idle, total}
+function readProcStatCpu(statOutput) {
+  const line = statOutput.split('\n').find(l => l.startsWith('cpu '))
+  if (!line) return null
+  const parts = line.trim().split(/\s+/).slice(1).map(Number)
+  // user, nice, system, idle, iowait, irq, softirq, steal...
+  const idle = parts[3] + (parts[4] || 0)   // idle + iowait
+  const total = parts.reduce((a, b) => a + b, 0)
+  return { idle, total }
+}
+
+// Calculate CPU % from two /proc/stat snapshots
+function calcCpuPct(prev, cur) {
+  if (!prev || !cur) return 0
+  const idleDelta = cur.idle - prev.idle
+  const totalDelta = cur.total - prev.total
+  if (totalDelta <= 0) return 0
+  return parseFloat((100 - (idleDelta / totalDelta) * 100).toFixed(1))
 }
 
 function parseRam(freeOutput) {
@@ -132,14 +144,26 @@ function parseUptime(uptimeOutput) {
 }
 
 async function collectMetrics() {
-  const [cpuRes, ramRes, diskRes, netRes, uptimeRes, procUptimeRes] = await Promise.all([
-    ssh.exec('top -bn1 | head -5', { ignoreErrors: true }),
+  // Read /proc/stat BEFORE other commands so we get an accurate delta
+  const firstStatRes = await ssh.exec('cat /proc/stat', { ignoreErrors: true })
+  const firstStat = readProcStatCpu(firstStatRes.stdout || '')
+
+  const [ramRes, diskRes, netRes, uptimeRes, procUptimeRes, secondStatRes] = await Promise.all([
     ssh.exec('free -m', { ignoreErrors: true }),
     ssh.exec('df -h /', { ignoreErrors: true }),
     ssh.exec('cat /proc/net/dev', { ignoreErrors: true }),
     ssh.exec('uptime', { ignoreErrors: true }),
     ssh.exec('cat /proc/uptime', { ignoreErrors: true }),
+    ssh.exec('cat /proc/stat', { ignoreErrors: true }),
   ])
+
+  // Calculate CPU from delta between first and second /proc/stat readings
+  const secondStat = readProcStatCpu(secondStatRes.stdout || '')
+  let cpu = calcCpuPct(prevCpuStat || firstStat, secondStat)
+  prevCpuStat = secondStat
+
+  // Clamp to 0-100 to avoid display glitches
+  cpu = Math.min(100, Math.max(0, cpu))
 
   const uptimeSeconds = procUptimeRes.stdout
     ? parseFloat(procUptimeRes.stdout.split(' ')[0])
@@ -148,7 +172,6 @@ async function collectMetrics() {
   const { loadAvg } = parseUptime(uptimeRes.stdout || '')
   const ram = parseRam(ramRes.stdout || '')
   const disk = parseDisk(diskRes.stdout || '')
-  const cpu = parseCpu(cpuRes.stdout || '')
 
   const now = Date.now()
   const curNet = readNetBytes(netRes.stdout || '')
