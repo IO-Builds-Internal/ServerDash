@@ -7,6 +7,7 @@ import {
 } from 'lucide-react'
 import api from '../lib/api'
 import { localAuth } from '../lib/auth'
+import { Dialog, Overlay } from '../components/Dialog'
 
 const STATUS_COLOR = {
   running: '#10b981',
@@ -365,6 +366,13 @@ export default function DockerPage() {
   const [showDeploy, setShowDeploy] = useState(false)
   const [collapsed, setCollapsed] = useState({})
   const [search, setSearch] = useState('')
+  const [dialog, setDialog] = useState(null)
+  const [stackToDelete, setStackToDelete] = useState(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+
+  const showError = (title, message) => {
+    setDialog({ title, message, type: 'warning', onConfirm: () => setDialog(null) })
+  }
 
   const load = useCallback(async () => {
     try {
@@ -380,36 +388,73 @@ export default function DockerPage() {
   }, [load])
 
   const action = async (c, act) => {
-    if (act === 'remove' && !confirm(`Are you absolutely sure you want to delete container: ${c.name}?`)) return
+    if (act === 'remove') {
+      setDialog({
+        title: 'Delete Container?',
+        message: `Are you sure you want to permanently delete container: ${c.name}?`,
+        type: 'confirm',
+        onConfirm: async () => {
+          setDialog(null)
+          setLoading(true)
+          try { 
+            await api.post(`/api/docker/${c.id}/${act}`)
+            load() 
+          } catch (e) { 
+            showError('Deletion Failed', e.response?.data?.error || e.message) 
+          } finally {
+            setLoading(false)
+          }
+        },
+        onCancel: () => setDialog(null)
+      })
+      return
+    }
+    
+    setLoading(true)
     try { 
       await api.post(`/api/docker/${c.id}/${act}`)
       load() 
     } catch (e) { 
-      alert(e.response?.data?.error || e.message) 
-    }
-  }
-
-  const stopStack = async (projectName) => {
-    if (!confirm(`Are you sure you want to stop all containers in the stack: ${projectName}?`)) return
-    setLoading(true)
-    try {
-      await api.post(`/api/docker/stacks/${projectName}/stop`)
-      load()
-    } catch (e) {
-      alert(e.response?.data?.error || e.message)
+      showError('Action Failed', e.response?.data?.error || e.message) 
     } finally {
       setLoading(false)
     }
   }
 
+  const stopStack = async (projectName) => {
+    setDialog({
+      title: 'Stop Docker Stack?',
+      message: `Are you sure you want to stop all containers in the stack: ${projectName}?`,
+      type: 'confirm',
+      onConfirm: async () => {
+        setDialog(null)
+        setLoading(true)
+        try {
+          await api.post(`/api/docker/stacks/${projectName}/stop`)
+          load()
+        } catch (e) {
+          showError('Action Failed', e.response?.data?.error || e.message)
+        } finally {
+          setLoading(false)
+        }
+      },
+      onCancel: () => setDialog(null)
+    })
+  }
+
   const deleteStack = async (projectName) => {
-    if (!confirm(`⚠️ CRITICAL WARNING ⚠️\n\nThis will completely STOP and DELETE all containers, VOLUMES, and networks in the "${projectName}" stack.\n\nALL DATA IN THIS STACK WILL BE PERMANENTLY LOST.\n\nAre you absolutely sure you want to delete this stack?`)) return
+    setStackToDelete(projectName)
+    setDeleteConfirmText('')
+  }
+
+  const executeDeleteStack = async (projectName) => {
+    setStackToDelete(null)
     setLoading(true)
     try {
       await api.delete(`/api/docker/stacks/${projectName}`)
       load()
     } catch (e) {
-      alert(e.response?.data?.error || e.message)
+      showError('Teardown Failed', e.response?.data?.error || e.message)
     } finally {
       setLoading(false)
     }
@@ -590,6 +635,58 @@ export default function DockerPage() {
           })
         )}
       </div>
+      {stackToDelete && (
+        <Overlay onClose={() => setStackToDelete(null)}>
+          <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 460, padding: 32, display: 'flex', flexDirection: 'column', gap: 18, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <AlertCircle size={24} color="var(--color-danger)" />
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900 }}>⚠️ Critical Destruction Action</h3>
+            </div>
+            
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              This will completely <strong>STOP and DELETE</strong> all containers, <strong>VOLUMES</strong>, and networks in the <strong>"{stackToDelete}"</strong> stack. <strong>ALL DATA IN THIS STACK WILL BE PERMANENTLY LOST.</strong>
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              <label className="label" style={{ fontSize: '0.78rem', color: 'var(--color-text-dim)' }}>
+                To confirm deletion, type the word <strong style={{ color: 'var(--color-text)' }}>DELETE</strong> below:
+              </label>
+              <input 
+                type="text" 
+                className="input" 
+                value={deleteConfirmText} 
+                onChange={e => setDeleteConfirmText(e.target.value)} 
+                placeholder="Type 'DELETE' to confirm" 
+                style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '0.9rem', letterSpacing: '0.05em' }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && deleteConfirmText === 'DELETE') {
+                    executeDeleteStack(stackToDelete)
+                  }
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setStackToDelete(null)} style={{ height: 38, padding: '0 20px' }}>
+                Cancel
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={() => executeDeleteStack(stackToDelete)} 
+                disabled={deleteConfirmText !== 'DELETE'}
+                style={{ 
+                  height: 38, 
+                  padding: '0 20px', 
+                  background: 'var(--color-danger)'
+                }}
+              >
+                💥 Permanently Destroy Stack
+              </button>
+            </div>
+          </div>
+        </Overlay>
+      )}
+      {dialog && <Dialog {...dialog} />}
     </div>
   )
 }
