@@ -1386,6 +1386,7 @@ if __name__ == '__main__':
     listen 80;
     listen [::]:80;
     server_name ${domain};
+    client_max_body_size 512M;
     location / {
         proxy_pass http://localhost:${port};
         proxy_http_version 1.1;
@@ -1403,6 +1404,7 @@ if __name__ == '__main__':
     listen 80;
     listen [::]:80;
     server_name ${domain};
+    client_max_body_size 512M;
     root ${webRoot};
     index index.html${type==='php'?' index.php':''};
     gzip on;
