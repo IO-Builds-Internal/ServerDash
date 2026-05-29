@@ -1050,8 +1050,9 @@ export default function SiteDetailPage() {
                     {actionBusy ? <RefreshCw size={15} className="animate-spin"/> : <RotateCcw size={15}/>}
                     {actionBusy ? 'Processing Action…' : 'Trigger Full Redeploy'}
                   </button>
-                  <button className="btn btn-secondary" onClick={runSSL} disabled={actionBusy || !site.configFile} style={{ width:'100%', justifyContent:'flex-start' }}>
-                    <Shield size={15}/> Re-config Let's Encrypt SSL
+                  <button className="btn btn-secondary" onClick={runSSL} disabled={actionBusy || !site.configFile} style={{ width:'100%', justifyContent:'flex-start', gap:8 }}>
+                    {site.ssl ? <RefreshCw size={15} className={actionBusy ? "animate-spin" : ""}/> : <Shield size={15}/>}
+                    {site.ssl ? 'Renew Let\'s Encrypt SSL Certificate' : 'Issue Let\'s Encrypt SSL Certificate'}
                   </button>
                   {site.root && (
                     <button className="btn btn-secondary" onClick={() => navigate('/files', { state: { path: site.root, backToSite: { id, domain: site.domain } } })} style={{ width:'100%', justifyContent:'flex-start' }}>
