@@ -94,6 +94,100 @@ export default function SiteDetailPage() {
 
   const [dialog, setDialog] = useState(null)
 
+  // WordPress installation states
+  const [wpTitle, setWpTitle] = useState('')
+  const [wpAdminUser, setWpAdminUser] = useState('admin')
+  const [wpAdminPass, setWpAdminPass] = useState('')
+  const [wpAdminEmail, setWpAdminEmail] = useState('')
+  const [wpInstalling, setWpInstalling] = useState(false)
+
+  // ZIP upload state
+  const [zipUploadFile, setZipUploadFile] = useState(null)
+  const [zipUploading, setZipUploading] = useState(false)
+  const zipInputRef = useRef()
+
+  useEffect(() => {
+    if (site) {
+      setWpTitle(site.domain || 'WordPress Site')
+      setWpAdminEmail(`admin@${site.domain || 'example.com'}`)
+    }
+  }, [site])
+
+  const handleInstallWordPress = async (e) => {
+    e.preventDefault()
+    setActionLogs([`▶ Initializing WordPress installation for ${site.domain}...`])
+    setShowLogs(true)
+    setActionBusy(true)
+    setWpInstalling(true)
+    setActiveTab('deployments')
+
+    const token = localAuth.getToken() || ''
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/install-wordpress`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({
+          wpTitle,
+          wpAdminUser,
+          wpAdminPass,
+          wpAdminEmail,
+        })
+      })
+
+      if (!resp.ok) {
+        throw new Error(`Server returned status code ${resp.status}`)
+      }
+
+      const reader = resp.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split('\n')
+        buf = parts.pop()
+        parts.forEach(l => {
+          if (l.startsWith('data: ')) {
+            setActionLogs(prev => [...prev, l.slice(6)])
+          } else if (l.trim()) {
+            setActionLogs(prev => [...prev, l])
+          }
+        })
+      }
+      loadSite()
+    } catch (err) {
+      setActionLogs(prev => [...prev, `✗ WordPress Installation Failed: ${err.message}`])
+    } finally {
+      setActionBusy(false)
+      setWpInstalling(false)
+    }
+  }
+
+  const handleUploadZip = async (file) => {
+    if (!file) return
+    setZipUploading(true)
+    const formData = new FormData()
+    formData.append('zip', file)
+
+    try {
+      await api.post(`/api/sites/${id}/upload-zip`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+      showSuccess('ZIP Uploaded', `✓ ZIP file '${file.name}' has been successfully uploaded and extracted into your site root!`)
+      setZipUploadFile(null)
+      loadSite()
+    } catch (err) {
+      showError('Upload Error', err.response?.data?.error || err.message)
+    } finally {
+      setZipUploading(false)
+    }
+  }
+
   const showSuccess = (title, message) => {
     setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
   }
@@ -833,6 +927,67 @@ export default function SiteDetailPage() {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* WordPress Installer Panel */}
+              {site.type === 'php' && !site.database && (
+                <div className="glass-card animate-fade-in" style={{ padding:24, display:'flex', flexDirection:'column', gap:18 }}>
+                  <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800, borderBottom:'1px solid var(--color-border)', paddingBottom:12, display:'flex', alignItems:'center', gap:8 }}>
+                    <Boxes size={18} color="var(--color-primary)"/> One-Click WordPress Bootstrapper
+                  </h3>
+                  <p style={{ margin:0, fontSize:'0.82rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                    Your directory does not contain WordPress configuration files. You can deploy a fully pre-configured, lightning-fast WordPress core installation instantly!
+                  </p>
+                  
+                  <form onSubmit={handleInstallWordPress} style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginTop:8 }}>
+                    <div>
+                      <label className="label">Site Title</label>
+                      <input className="input" value={wpTitle} onChange={e=>setWpTitle(e.target.value)} required style={{ color: 'var(--color-text)' }} />
+                    </div>
+                    <div>
+                      <label className="label">Admin Email</label>
+                      <input className="input" type="email" value={wpAdminEmail} onChange={e=>setWpAdminEmail(e.target.value)} required style={{ color: 'var(--color-text)' }} />
+                    </div>
+                    <div>
+                      <label className="label">Admin Username</label>
+                      <input className="input" value={wpAdminUser} onChange={e=>setWpAdminUser(e.target.value)} required style={{ color: 'var(--color-text)' }} />
+                    </div>
+                    <div>
+                      <label className="label">Admin Password</label>
+                      <input className="input" type="password" value={wpAdminPass} onChange={e=>setWpAdminPass(e.target.value)} placeholder="Leave blank to generate randomly" style={{ border:'1px solid var(--color-border)', color: 'var(--color-text)' }} />
+                    </div>
+                    <div style={{ gridColumn:'span 2', marginTop:8 }}>
+                      <button type="submit" className="btn btn-primary" disabled={wpInstalling || actionBusy} style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+                        {wpInstalling ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
+                        {wpInstalling ? 'Installing WordPress Core (Downloading & Configuring DB)...' : 'Install WordPress Core Now'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* ZIP File Codebase Uploader Panel */}
+              {site.type !== 'proxy' && !site.isSystemPanel && (
+                <div className="glass-card animate-fade-in" style={{ padding:24, display:'flex', flexDirection:'column', gap:14 }}>
+                  <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800, borderBottom:'1px solid var(--color-border)', paddingBottom:12, display:'flex', alignItems:'center', gap:8 }}>
+                    <Upload size={18} color="var(--color-success)"/> Upload Site Codebase (ZIP Archive)
+                  </h3>
+                  <p style={{ margin:0, fontSize:'0.82rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                    Quickly upload your site's codebase in a `.zip` archive. ServerDash will automatically extract and deploy it directly inside the root folder (<code>{site.root}</code>).
+                  </p>
+                  
+                  <div onClick={()=>zipInputRef.current?.click()} style={{ border:'2px dashed var(--color-border)', borderRadius:10, padding:24, textAlign:'center', cursor:'pointer', background:'rgba(255,255,255,0.01)', marginTop:8, transition:'all 0.2s', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center' }}>
+                    <Upload size={22} style={{ color:'var(--color-text-muted)', marginBottom:8 }}/>
+                    <div style={{ fontWeight:600, fontSize:'0.85rem' }}>{zipUploadFile ? zipUploadFile.name : 'Select or drop ZIP file here'}</div>
+                    <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', marginTop:2 }}>Maximum size determined by php/nginx client upload limits</div>
+                    <input type="file" ref={zipInputRef} accept=".zip" hidden onChange={e => { if (e.target.files?.[0]) handleUploadZip(e.target.files[0]) }} />
+                  </div>
+                  {zipUploading && (
+                    <div style={{ display:'flex', alignItems:'center', gap:8, color:'var(--color-primary)', fontSize:'0.8rem', fontWeight:700, marginTop:10, justifyContent:'center' }}>
+                      <RefreshCw size={14} className="animate-spin" /> Uploading and extracting ZIP files...
+                    </div>
+                  )}
                 </div>
               )}
             </div>

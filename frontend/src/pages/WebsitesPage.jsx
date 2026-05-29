@@ -458,7 +458,7 @@ function Wizard({ onClose, onCreated }) {
           {step<2 && <button className="btn btn-primary" onClick={()=>setStep(s=>s+1)} disabled={step===0&&!domain.trim()}>Next →</button>}
           {step===2 && <button className="btn btn-primary" onClick={deploy}>🚀 Deploy Site</button>}
           {step===3 && (done || !deploying) && (
-            <button className="btn btn-primary animate-hover" onClick={() => { onCreated(); onClose(); }} style={{ padding: '0 20px', height: 38 }}>
+            <button className="btn btn-primary animate-hover" onClick={() => { onCreated(domain); onClose(); }} style={{ padding: '0 20px', height: 38 }}>
               {done ? 'Finish & Close ✓' : 'Close & Retry'}
             </button>
           )}
@@ -580,7 +580,19 @@ export default function WebsitesPage() {
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {showWizard && <Wizard onClose={() => setShowWizard(false)} onCreated={() => { setShowWizard(false); load() }} />}
+      {showWizard && (
+        <Wizard 
+          onClose={() => setShowWizard(false)} 
+          onCreated={(createdDomain) => { 
+            setShowWizard(false); 
+            load(); 
+            if (createdDomain) {
+              const siteId = createdDomain.replace(/[^a-z0-9]/gi, '-');
+              navigate(`/websites/manage/${siteId}`);
+            }
+          }} 
+        />
+      )}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <div>

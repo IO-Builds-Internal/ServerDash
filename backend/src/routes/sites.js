@@ -563,6 +563,62 @@ router.post('/:id/config', async (req, res) => {
   }
 })
 
+// ── POST /api/sites/:id/install-wordpress (SSE) ─────────────────────────────────
+router.post('/:id/install-wordpress', async (req, res) => {
+  const send = sseSetup(res)
+  const { id } = req.params
+  const { wpTitle, wpAdminUser, wpAdminPass, wpAdminEmail, phpVersion = '8.5' } = req.body || req.query || {}
+
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) { send('✗ Site not found'); return res.end() }
+
+    send(`▶ Initializing WordPress installation for ${site.domain}…`)
+    const root = site.root || `/var/www/${site.domain}`
+    fs.mkdirSync(root, { recursive: true })
+
+    await prepareWordPress({
+      sitePath: root,
+      domain: site.domain,
+      phpVersion,
+      wpTitle,
+      wpAdminUser,
+      wpAdminPass,
+      wpAdminEmail,
+      send,
+    })
+
+    send('✓ WordPress successfully installed!')
+  } catch (err) {
+    send(`✗ Error: ${err.message}`)
+  }
+  res.end()
+})
+
+// ── POST /api/sites/:id/upload-zip ──────────────────────────────────────────────
+router.post('/:id/upload-zip', upload.single('zip'), async (req, res) => {
+  const { id } = req.params
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) return res.status(404).json({ error: 'Site not found' })
+    if (!req.file) return res.status(400).json({ error: 'No ZIP file uploaded' })
+
+    const root = site.root || `/var/www/${site.domain}`
+    fs.mkdirSync(root, { recursive: true })
+
+    logger.info('Extracting uploaded ZIP to site root', { root, originalname: req.file.originalname })
+    await execAsync(`unzip -o "${req.file.path}" -d "${root}" 2>&1`)
+    fs.unlinkSync(req.file.path)
+
+    res.json({ success: true, message: 'ZIP file successfully uploaded and extracted!' })
+  } catch (err) {
+    logger.error('Upload ZIP error', { id, error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
 async function getNginxSites() {
   const sitesDir = '/etc/nginx/sites-enabled'
   const files = fs.readdirSync(sitesDir).filter(f => !f.startsWith('.'))
