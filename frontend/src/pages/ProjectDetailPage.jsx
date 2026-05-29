@@ -5,7 +5,7 @@ import {
   Activity, Layers, Play, Square, RotateCcw, ArrowDown,
   RefreshCw, Upload, Globe, Server, Eye, EyeOff, Copy, Check,
   Cpu, HardDrive, Shield, AlertTriangle, Key, ExternalLink, Trash2,
-  Calendar, CheckCircle, Info, Plus, Save
+  Calendar, CheckCircle, Info, Plus, Save, Download
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
@@ -109,6 +109,7 @@ const TABS = [
   { id: 'containers', label: 'Containers', icon: Layers },
   { id: 'sql', label: '⚡ SQL Editor', icon: Code2 },
   { id: 'migrations', label: 'Migrations', icon: Database },
+  { id: 'backups', label: 'Backups', icon: Database },
   { id: 'env', label: '.env Secrets', icon: Settings },
   { id: 'compose', label: 'Compose Spec', icon: FileText },
   { id: 'functions', label: 'Edge Functions', icon: Code2 },
@@ -141,6 +142,11 @@ export default function ProjectDetailPage() {
   const [editedCompose, setEditedCompose] = useState('')
   const [savingCompose, setSavingCompose] = useState(false)
   const [composeError, setComposeError] = useState('')
+
+  // Backups state
+  const [backupsList, setBackupsList] = useState([])
+  const [backupsLoading, setBackupsLoading] = useState(false)
+  const [backupBusy, setBackupBusy] = useState(false)
 
   const [newFnName, setNewFnName]   = useState('')
   const [selectedFns, setSelectedFns] = useState(new Set())
@@ -181,6 +187,8 @@ export default function ProjectDetailPage() {
           }
         })
         .catch(() => {})
+    } else if (tab === 'backups') {
+      fetchBackups()
     }
   }, [tab, id])
 
@@ -319,6 +327,74 @@ export default function ProjectDetailPage() {
     }
     setSavingCompose(false)
   }
+
+  const fetchBackups = async () => {
+    setBackupsLoading(true)
+    try {
+      const r = await api.get(`/api/supabase/${id}/backups`)
+      setBackupsList(r.data)
+    } catch (e) {
+      setActionMsg(`✗ Failed to load backups: ${e.message}`)
+    }
+    setBackupsLoading(false)
+  }
+
+  const createBackup = async () => {
+    setBackupBusy(true); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/backups/create`)
+      setActionMsg('✓ Database backup generated successfully')
+      fetchBackups()
+    } catch (e) {
+      setActionMsg(`✗ Backup failed: ${e.response?.data?.error || e.message}`)
+    }
+    setBackupBusy(false)
+  }
+
+  const restoreBackup = async (filename) => {
+    if (!window.confirm(`Are you sure you want to restore the backup "${filename}"? This will overwrite the database schema and content.`)) return
+    setActionBusy('restore'); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/backups/${filename}/restore`)
+      setActionMsg(`✓ Database successfully restored to state of "${filename}"`)
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setActionMsg(`✗ Restore failed: ${e.response?.data?.error || e.message}`)
+    }
+    setActionBusy(null)
+  }
+
+  const deleteBackup = async (filename) => {
+    if (!window.confirm(`Are you sure you want to delete backup "${filename}"?`)) return
+    try {
+      await api.delete(`/api/supabase/${id}/backups/${filename}`)
+      setActionMsg('✓ Backup deleted successfully')
+      fetchBackups()
+    } catch (e) {
+      setActionMsg(`✗ Failed to delete backup: ${e.message}`)
+    }
+  }
+
+  const downloadBackup = async (filename) => {
+    setActionMsg('')
+    try {
+      const response = await api.get(`/api/supabase/${id}/backups/${filename}`, {
+        responseType: 'blob'
+      })
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', filename)
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setActionMsg(`✓ Backup downloaded successfully`)
+    } catch (e) {
+      setActionMsg(`✗ Failed to download backup: ${e.message}`)
+    }
+  }
+
 
   const createFunction = async () => {
     if (!newFnName) return
@@ -987,6 +1063,113 @@ export default function ProjectDetailPage() {
                       </div>
                     )
                   })}
+                </div>
+              </div>
+            )}
+
+          </div>
+        )}
+
+        {/* DATABASE BACKUPS TAB */}
+        {tab === 'backups' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            
+            <div className="glass-card" style={{ padding: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Isolated Database Backups Panel</h3>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+                  Generate schema-safe custom SQL dumps of your isolated database and manage historical snapshots.
+                </p>
+              </div>
+
+              <div>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={createBackup} 
+                  disabled={backupBusy || backupsLoading} 
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, height: 38 }}
+                >
+                  <RefreshCw size={14} className={(backupBusy || backupsLoading) ? 'animate-spin' : ''} />
+                  {backupBusy ? 'Generating Snapshot...' : '⚡ Generate SQL Backup'}
+                </button>
+              </div>
+            </div>
+
+            {/* Backups List */}
+            {backupsLoading ? (
+              <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <RefreshCw size={32} className="animate-spin" style={{ opacity: 0.5, marginBottom: 12, display: 'inline-block' }} />
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Scanning backups directory...</h4>
+              </div>
+            ) : backupsList.length === 0 ? (
+              <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <Database size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>No backups recorded</h4>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                  Click "Generate SQL Backup" above to capture a schema-safe snapshot of your isolated PostgreSQL instance.
+                </p>
+              </div>
+            ) : (
+              <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border)' }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Available Database Backups ({backupsList.length})</span>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {backupsList.map((b, i) => (
+                    <div key={b.name} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 14,
+                      padding: '16px 20px',
+                      borderBottom: i < backupsList.length - 1 ? '1px solid var(--color-border)' : 'none',
+                      transition: 'background 0.2s',
+                      flexWrap: 'wrap'
+                    }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Database size={15} color="var(--color-primary)" />
+                      </div>
+                      
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text)' }}>{b.name}</span>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                          Captured on {new Date(b.modifiedAt).toLocaleString()}
+                        </div>
+                      </div>
+
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', paddingRight: 20 }}>
+                        {(b.size / 1024).toFixed(1)} KB
+                      </span>
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => downloadBackup(b.name)}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <Download size={12} />
+                          Download
+                        </button>
+                        <button 
+                          className="btn btn-primary btn-sm" 
+                          onClick={() => restoreBackup(b.name)}
+                          disabled={!!actionBusy}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <RefreshCw size={12} className={actionBusy === 'restore' ? 'animate-spin' : ''} />
+                          Restore
+                        </button>
+                        <button 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => deleteBackup(b.name)}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4, borderColor: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)' }}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

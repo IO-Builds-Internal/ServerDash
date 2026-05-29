@@ -9,6 +9,83 @@ const fs = require('fs')
 const path = require('path')
 const { execSync } = require('child_process')
 
+// Helper function to cleanly sanitize SQL dump contents natively in Javascript
+const cleanSqlContent = (content) => {
+  const systemSchemas = ['auth', 'storage', 'vault', 'extensions', '_realtime', 'realtime', 'graphql', 'graphql_public', 'pgbouncer', 'supabase_functions']
+  const lines = content.split('\n')
+  const outLines = []
+  let inCopy = false
+  let copyTargetPublic = false
+  let stmtLines = []
+
+  const createAlterSystem = new RegExp('\\b(create|alter|drop|comment on)\\s+(schema|table|column|function|trigger|type|view|index|policy|sequence)\\s+\\b(' + systemSchemas.join('|') + ')\\b', 'i')
+  const excludeTypes = new RegExp('\\b(create|alter|drop|grant|revoke)\\s+(role|user|extension|default privileges)\\b', 'i')
+  const createSchemaSystem = new RegExp('\\bcreate\\s+schema\\s+\\b(' + systemSchemas.join('|') + ')\\b', 'i')
+
+  for (const line of lines) {
+    const stripped = line.trim()
+
+    if (inCopy) {
+      if (stripped === '\\.') {
+        inCopy = false
+        if (copyTargetPublic) {
+          stmtLines.push(line)
+          outLines.push(...stmtLines)
+        }
+        stmtLines = []
+      } else {
+        if (copyTargetPublic) {
+          stmtLines.push(line)
+        }
+      }
+      continue
+    }
+
+    if (stripped.toLowerCase().startsWith('copy ')) {
+      const isPublic = stripped.toLowerCase().includes('public.') || !systemSchemas.some(s => stripped.toLowerCase().includes(`${s}.`))
+      if (isPublic) {
+        inCopy = true
+        copyTargetPublic = true
+        stmtLines = [line]
+      } else {
+        inCopy = true
+        copyTargetPublic = false
+      }
+      continue
+    }
+
+    stmtLines.push(line)
+
+    if (stripped.endsWith(';')) {
+      const stmtText = stmtLines.join('\n').trim()
+      let keep = true
+
+      if (createAlterSystem.test(stmtText)) {
+        keep = false
+      } else if (excludeTypes.test(stmtText)) {
+        keep = false
+      } else if (createSchemaSystem.test(stmtText)) {
+        keep = false
+      } else if (stmtText.toLowerCase().includes('search_path') && !stmtText.toLowerCase().includes('public') && systemSchemas.some(s => stmtText.toLowerCase().includes(s))) {
+        keep = false
+      } else if (stmtText.toLowerCase().includes('on auth.') || stmtText.toLowerCase().includes('on storage.')) {
+        keep = false
+      }
+
+      if (keep) {
+        outLines.push(...stmtLines)
+      }
+      stmtLines = []
+    }
+  }
+
+  if (stmtLines.length > 0) {
+    outLines.push(...stmtLines)
+  }
+
+  return outLines.join('\n')
+}
+
 // ── Constants ──────────────────────────────────────────────────────────────────
 const REPO_PATH = '/opt/supabase-repo'           // Official Supabase git clone
 const PROJECTS_DIR = '/opt/supabase-projects'    // Where user projects live
@@ -578,6 +655,11 @@ router.post('/:id/migrate', upload.single('migration'), async (req, res) => {
       sqlPath = tmpSql
     }
 
+    // Sanitize the SQL dump natively using pure JS before executing it
+    const rawSql = fs.readFileSync(sqlPath, 'utf8')
+    const sanitizedSql = cleanSqlContent(rawSql)
+    fs.writeFileSync(sqlPath, sanitizedSql, 'utf8')
+
     const result = await ssh.exec(
       `cat ${sqlPath} | docker exec -i $(cd ${project.composePath} && docker compose ps -q db) psql -U postgres`,
       { timeout: 300000 }
@@ -961,9 +1043,135 @@ router.post('/:id/migrations/run', async (req, res) => {
   res.json({ results })
 })
 
-// ── POST /api/supabase/:id/migrate (upload & run single file) ────────────────
-// (kept for backward compat — stores the file in migrations/ then runs it)
-// Previously defined further up — now re-ordered here for clarity
+// ── GET /api/supabase/:id/backups ──────────────────────────────────────────────
+router.get('/:id/backups', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const backupsDir = `${project.composePath}/backups`
+  try {
+    if (!fs.existsSync(backupsDir)) {
+      fs.mkdirSync(backupsDir, { recursive: true })
+      return res.json([])
+    }
+    const files = fs.readdirSync(backupsDir)
+      .filter(f => f.endsWith('.sql'))
+      .map(f => {
+        const st = fs.statSync(path.join(backupsDir, f))
+        return { name: f, size: st.size, modifiedAt: st.mtime.toISOString() }
+      })
+      .sort((a, b) => b.name.localeCompare(a.name)) // newest first
+    res.json(files)
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── POST /api/supabase/:id/backups/create ──────────────────────────────────────
+router.post('/:id/backups/create', async (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const backupsDir = `${project.composePath}/backups`
+  fs.mkdirSync(backupsDir, { recursive: true })
+  
+  const filename = `backup-${Date.now()}.sql`
+  const targetPath = path.join(backupsDir, filename)
+
+  try {
+    // pg_dump with explicit exclusions for internal Supabase schemas to avoid conflicts
+    const cmd = `docker compose -f ${project.composePath}/docker-compose.yml exec -T db pg_dump -U postgres --quote-all-identifiers --exclude-schema=auth --exclude-schema=storage --exclude-schema=extensions --exclude-schema=graphql --exclude-schema=graphql_public --exclude-schema=realtime --exclude-schema=_realtime --exclude-schema=supabase_functions --exclude-schema=vault --exclude-schema=pgbouncer postgres > "${targetPath}" 2>&1`
+    
+    const result = await ssh.exec(cmd, { timeout: 300000 })
+    
+    // Verify file was written and is not empty
+    if (fs.existsSync(targetPath) && fs.statSync(targetPath).size > 0) {
+      res.json({ success: true, message: 'Backup created successfully', filename })
+    } else {
+      // Clean up empty file if any
+      try { fs.unlinkSync(targetPath) } catch {}
+      res.status(500).json({ error: 'pg_dump failed to write backup file', details: result.stdout || result.stderr })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/supabase/:id/backups/:filename/restore ──────────────────────────
+router.post('/:id/backups/:filename/restore', async (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { filename } = req.params
+  const backupsDir = `${project.composePath}/backups`
+  const targetPath = path.join(backupsDir, path.basename(filename))
+
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'Backup file not found' })
+
+  try {
+    // Sanitize the backup SQL natively using cleanSqlContent to guarantee no conflict
+    const rawSql = fs.readFileSync(targetPath, 'utf8')
+    const sanitizedSql = cleanSqlContent(rawSql)
+    
+    const tempSanitized = `/tmp/supabase-restore-${uuidv4()}.sql`
+    fs.writeFileSync(tempSanitized, sanitizedSql, 'utf8')
+
+    // Execute the sanitized SQL restore against the database container
+    const cmd = `cat "${tempSanitized}" | docker compose -f ${project.composePath}/docker-compose.yml exec -T db psql -U postgres`
+    const result = await ssh.exec(cmd, { timeout: 300000 })
+    
+    // Cleanup temp sanitized file
+    try { fs.unlinkSync(tempSanitized) } catch {}
+
+    if (result.code === 0) {
+      res.json({ success: true, message: 'Database restored successfully' })
+    } else {
+      res.status(500).json({ error: 'Restore execution failed', details: result.stderr })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── GET /api/supabase/:id/backups/:filename (Download Backup) ──────────────────
+router.get('/:id/backups/:filename', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { filename } = req.params
+  const backupsDir = `${project.composePath}/backups`
+  const targetPath = path.join(backupsDir, path.basename(filename))
+
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'Backup file not found' })
+
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
+  res.setHeader('Content-Type', 'application/sql')
+  res.sendFile(targetPath)
+})
+
+// ── DELETE /api/supabase/:id/backups/:filename ────────────────────────────────
+router.delete('/:id/backups/:filename', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { filename } = req.params
+  const backupsDir = `${project.composePath}/backups`
+  const targetPath = path.join(backupsDir, path.basename(filename))
+
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'Backup file not found' })
+
+  try {
+    fs.unlinkSync(targetPath)
+    res.json({ success: true, message: 'Backup file deleted' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 
 // ── POST /api/supabase/:id/proxy ──────────────────────────────────────────────
