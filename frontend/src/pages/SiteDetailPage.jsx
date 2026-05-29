@@ -761,9 +761,11 @@ export default function SiteDetailPage() {
             <button className={`tab ${activeTab === 'deployments' ? 'active' : ''}`} onClick={() => setActiveTab('deployments')}>
               Deployments {actionBusy && <span style={{ display:'inline-block', width:8, height:8, background:'var(--color-primary)', borderRadius:'50%' }} className="animate-pulse-dot"/>}
             </button>
-            <button className={`tab ${activeTab === 'build' ? 'active' : ''}`} onClick={() => setActiveTab('build')}>
-              Build & Start Settings
-            </button>
+            {(site.type === 'node' || site.type === 'static') && (
+              <button className={`tab ${activeTab === 'build' ? 'active' : ''}`} onClick={() => setActiveTab('build')}>
+                Build & Start Settings
+              </button>
+            )}
             <button className={`tab ${activeTab === 'env' ? 'active' : ''}`} onClick={() => setActiveTab('env')}>
               Environment Variables
             </button>
@@ -1149,7 +1151,7 @@ export default function SiteDetailPage() {
         )}
 
         {/* TAB 3: BUILD SETTINGS */}
-        {activeTab === 'build' && (
+        {activeTab === 'build' && (site.type === 'node' || site.type === 'static') && (
           <div className="glass-card animate-fade-in" style={{ padding:24, display:'flex', flexDirection:'column', gap:20 }}>
             <div>
               <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800 }}>Build & Development Settings</h3>
