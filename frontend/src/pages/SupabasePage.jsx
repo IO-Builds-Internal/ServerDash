@@ -1102,6 +1102,8 @@ export default function SupabasePage() {
   const [actionMessage, setActionMessage] = useState('')
   const [dialog, setDialog] = useState(null)
   const [deleteProgress, setDeleteProgress] = useState(null) // null or { title: '', lines: [], active: true }
+  const [projectToDelete, setProjectToDelete] = useState(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
 
   const showSuccess = (title, message) => {
     setDialog({ title, message, type: 'success', onConfirm: () => setDialog(null) })
@@ -1124,48 +1126,10 @@ export default function SupabasePage() {
 
   const doAction = async (id, action) => {
     if (action === 'remove') {
-      const pName = projects.find(p => p.id === id)?.name || 'Project'
-      setDialog({
-        title: 'Delete Supabase Project?',
-        message: `Are you sure you want to delete this Supabase project "${pName}" and all its database containers? This cannot be undone.`,
-        type: 'confirm',
-        onConfirm: async () => {
-          setDialog(null)
-          setDeleteProgress({ title: `Deleting ${pName}`, lines: ['▶ Requesting project teardown...'], active: true })
-          try {
-            const token = localAuth.getToken() || ''
-            const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/delete-stream`, {
-              method: 'POST',
-              headers: { Authorization: `Bearer ${token}` }
-            })
-
-            if (!resp.ok) {
-              let errText = await resp.text()
-              try { errText = JSON.parse(errText).error || errText } catch {}
-              throw new Error(errText || `Teardown returned status ${resp.status}`)
-            }
-
-            const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
-            while (true) {
-              const { done: d, value } = await reader.read(); if (d) break
-              buf += dec.decode(value, { stream: true })
-              const parts = buf.split('\n')
-              buf = parts.pop()
-              parts.forEach(l => {
-                if (l.startsWith('data: ')) {
-                  const content = l.slice(6)
-                  setDeleteProgress(prev => prev ? { ...prev, lines: [...prev.lines, content] } : null)
-                }
-              })
-            }
-            setDeleteProgress(prev => prev ? { ...prev, active: false } : null)
-            load()
-          } catch (e) {
-            setDeleteProgress(prev => prev ? { ...prev, active: false, lines: [...prev.lines, `✗ Deletion Failed: ${e.message}`] } : null)
-          }
-        },
-        onCancel: () => setDialog(null)
-      })
+      const proj = projects.find(p => p.id === id)
+      if (!proj) return
+      setProjectToDelete(proj)
+      setDeleteConfirmText('')
       return
     }
     
@@ -1174,6 +1138,44 @@ export default function SupabasePage() {
       load()
     } catch (e) {
       showError('Action Failed', e.response?.data?.error || e.message)
+    }
+  }
+
+  const executeTeardown = async (proj) => {
+    const id = proj.id
+    const pName = proj.name
+    setProjectToDelete(null)
+    setDeleteProgress({ title: `Deleting ${pName}`, lines: ['▶ Requesting project teardown...'], active: true })
+    try {
+      const token = localAuth.getToken() || ''
+      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/delete-stream`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+
+      if (!resp.ok) {
+        let errText = await resp.text()
+        try { errText = JSON.parse(errText).error || errText } catch {}
+        throw new Error(errText || `Teardown returned status ${resp.status}`)
+      }
+
+      const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
+      while (true) {
+        const { done: d, value } = await reader.read(); if (d) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split('\n')
+        buf = parts.pop()
+        parts.forEach(l => {
+          if (l.startsWith('data: ')) {
+            const content = l.slice(6)
+            setDeleteProgress(prev => prev ? { ...prev, lines: [...prev.lines, content] } : null)
+          }
+        })
+      }
+      setDeleteProgress(prev => prev ? { ...prev, active: false } : null)
+      load()
+    } catch (e) {
+      setDeleteProgress(prev => prev ? { ...prev, active: false, lines: [...prev.lines, `✗ Deletion Failed: ${e.message}`] } : null)
     }
   }
 
@@ -1560,6 +1562,57 @@ export default function SupabasePage() {
                 </button>
               </div>
             )}
+          </div>
+        </Overlay>
+      )}
+      {projectToDelete && (
+        <Overlay onClose={() => setProjectToDelete(null)}>
+          <div className="glass-card animate-fade-in" style={{ width: '100%', maxWidth: 460, padding: 32, display: 'flex', flexDirection: 'column', gap: 18, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <AlertCircle size={24} color="var(--color-danger)" />
+              <h3 style={{ margin: 0, fontSize: '1.2rem', fontWeight: 900 }}>⚠️ Critical Destruction Action</h3>
+            </div>
+            
+            <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)', lineHeight: 1.6 }}>
+              You are about to permanently delete the Supabase project <strong>"{projectToDelete.name}"</strong>, including all its database volumes, historical migrations, backups, edge functions, and proxy domain configurations. <strong>This action cannot be undone.</strong>
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+              <label className="label" style={{ fontSize: '0.78rem', color: 'var(--color-text-dim)' }}>
+                To confirm deletion, type the word <strong style={{ color: 'var(--color-text)' }}>DELETE</strong> below:
+              </label>
+              <input 
+                type="text" 
+                className="input" 
+                value={deleteConfirmText} 
+                onChange={e => setDeleteConfirmText(e.target.value)} 
+                placeholder="Type 'DELETE' to confirm" 
+                style={{ textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: '0.9rem', letterSpacing: '0.05em' }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && deleteConfirmText === 'DELETE') {
+                    executeTeardown(projectToDelete)
+                  }
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setProjectToDelete(null)} style={{ height: 38, padding: '0 20px' }}>
+                Cancel
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={() => executeTeardown(projectToDelete)} 
+                disabled={deleteConfirmText !== 'DELETE'}
+                style={{ 
+                  height: 38, 
+                  padding: '0 20px', 
+                  background: 'var(--color-danger)'
+                }}
+              >
+                💥 Permanently Destroy Stack
+              </button>
+            </div>
           </div>
         </Overlay>
       )}
