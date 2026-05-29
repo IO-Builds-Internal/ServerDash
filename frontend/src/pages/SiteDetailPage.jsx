@@ -1172,6 +1172,7 @@ export default function SiteDetailPage() {
                     onChange={e => setBuildSettings(prev => ({ ...prev, nodeVersion: e.target.value }))}
                   >
                     <option value="system">Default Node.js (System-wide Version)</option>
+                    <option value="v22.x">Node.js v22.x (LTS)</option>
                     <option value="v20.x">Node.js v20.x (LTS)</option>
                     <option value="v18.x">Node.js v18.x (LTS)</option>
                     <option value="v16.x">Node.js v16.x</option>

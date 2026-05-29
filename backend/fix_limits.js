@@ -22,10 +22,11 @@ for (const file of files) {
       
       let memoryLimit = '256M';
       if (serviceName === 'db') memoryLimit = '1024M';
-      else if (serviceName === 'analytics') memoryLimit = '384M';
-      else if (serviceName === 'studio') memoryLimit = '256M';
+      else if (serviceName === 'analytics') memoryLimit = '1024M';
+      else if (serviceName === 'studio') memoryLimit = '1024M';
+      else if (serviceName === 'kong') memoryLimit = '1024M';
       else if (serviceName === 'vector') memoryLimit = '128M';
-      else if (serviceName === 'logflare') memoryLimit = '384M';
+      else if (serviceName === 'logflare') memoryLimit = '1024M';
       else if (serviceName === 'meta') memoryLimit = '256M';
       else if (serviceName === 'storage') memoryLimit = '256M';
       

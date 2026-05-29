@@ -200,16 +200,16 @@ router.get('/check-repo', async (req, res) => {
 // ── GET /api/sites/node-versions — available Node.js versions via nvm ──────────
 router.get('/node-versions', async (req, res) => {
   try {
-    const { stdout } = await execAsync('nvm ls-remote --lts 2>/dev/null | tail -20 || node -v 2>/dev/null', { timeout: 10000 })
+    const { stdout } = await execAsync('export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" && nvm ls-remote --lts 2>/dev/null | tail -20 || node -v 2>/dev/null', { timeout: 10000 })
     const versions = stdout.split('\n').filter(Boolean)
       .map(l => l.trim().replace(/[^v0-9.]/g, ''))
       .filter(v => /^v\d+/.test(v))
       .reverse()
       .slice(0, 12)
     const current = await execAsync('node -v 2>/dev/null').then(r => r.stdout.trim()).catch(() => '')
-    res.json({ versions: versions.length ? versions : ['v20.x (lts)', 'v18.x (lts)', 'v16.x'], current })
+    res.json({ versions: versions.length ? versions : ['v22.x (lts)', 'v20.x (lts)', 'v18.x (lts)', 'v16.x'], current })
   } catch {
-    res.json({ versions: ['v20.x (LTS)', 'v18.x (LTS)', 'v16.x'], current: '' })
+    res.json({ versions: ['v22.x (LTS)', 'v20.x (LTS)', 'v18.x (LTS)', 'v16.x'], current: '' })
   }
 })
 
@@ -1016,6 +1016,29 @@ router.post('/:id/restart', async (req, res) => {
   }
 })
 
+// ── Helper: resolve the best certbot account for a domain ─────────────────────
+const getCertbotAccount = (domain) => {
+  // Check if a renewal config exists and has an account field
+  try {
+    const renewalConf = `/etc/letsencrypt/renewal/${domain}.conf`
+    if (fs.existsSync(renewalConf)) {
+      const content = fs.readFileSync(renewalConf, 'utf8')
+      const m = content.match(/^account\s*=\s*([a-f0-9]+)/m)
+      if (m) return m[1]
+    }
+  } catch {}
+  // Fall back: pick the first production account found
+  try {
+    const accountsDir = '/etc/letsencrypt/accounts/acme-v02.api.letsencrypt.org/directory'
+    if (fs.existsSync(accountsDir)) {
+      const accounts = fs.readdirSync(accountsDir).filter(a => a.length === 32)
+      if (accounts.length === 1) return accounts[0]
+      if (accounts.length > 1) return accounts[0] // return first; renewal conf is preferred
+    }
+  } catch {}
+  return null
+}
+
 // ── POST /api/sites/:id/ssl ───────────────────────────────────────────────────
 router.post('/:id/ssl', async (req, res) => {
   const { id } = req.params
@@ -1027,14 +1050,38 @@ router.post('/:id/ssl', async (req, res) => {
     const domain = site.domain
     logger.info('Starting SSL configuration', { domain })
 
-    const { stdout, stderr } = await execAsync(
-      `certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain} 2>&1`,
-      { timeout: 120000 }
-    )
-    
+    let output = ''
+
+    // Check if cert already exists — if so, use renew instead of re-issuing
+    const renewalConf = `/etc/letsencrypt/renewal/${domain}.conf`
+    const certExists = fs.existsSync(renewalConf) &&
+      fs.existsSync(`/etc/letsencrypt/live/${domain}/fullchain.pem`)
+
+    if (certExists) {
+      // Re-install existing cert into nginx (handles the multiple-account ambiguity)
+      logger.info('Cert already exists, re-installing into nginx', { domain })
+      const { stdout } = await execAsync(
+        `certbot install --nginx --cert-name ${domain} --non-interactive 2>&1`,
+        { timeout: 60000 }
+      ).catch(async () => {
+        // Fallback: just ensure nginx config has SSL lines and reload
+        return await execAsync(`certbot renew --cert-name ${domain} --force-renewal --non-interactive 2>&1`, { timeout: 120000 })
+      })
+      output = stdout || 'Certificate re-installed into Nginx'
+    } else {
+      // New cert — auto-detect account to avoid "choose an account" prompt
+      const account = getCertbotAccount(domain)
+      const accountFlag = account ? ` --account ${account}` : ''
+      const { stdout } = await execAsync(
+        `certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}${accountFlag} 2>&1`,
+        { timeout: 120000 }
+      )
+      output = stdout || 'SSL certificate installed'
+    }
+
     await execAsync('systemctl reload nginx')
     logger.info('SSL configuration completed', { domain })
-    res.json({ success: true, output: stdout || stderr || 'SSL certificate configured' })
+    res.json({ success: true, output })
   } catch (err) {
     logger.error('SSL configuration error', { id, error: err.message })
     res.status(500).json({ error: err.message })
@@ -1243,37 +1290,76 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
 
     // --- Node.js: install/build/start with PM2 ──────────────────────────────
     if (type === 'node') {
-      if (fs.existsSync(path.join(sitePath, 'package.json'))) {
+      // Detect if this is a static SPA (Vite, CRA, Next.js export) with no runtime server
+      let isSpa = false
+      let pkgJson = {}
+      const pkgPath = path.join(sitePath, 'package.json')
+      if (fs.existsSync(pkgPath)) {
+        try { pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) } catch {}
+        const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
+        const hasVite = !!deps.vite || !!(pkgJson.scripts?.dev || '').includes('vite')
+        const hasCra = !!deps['react-scripts'] || !!(pkgJson.scripts?.start || '').includes('react-scripts')
+        const hasNextStatic = !!deps.next && !!(pkgJson.scripts?.start || '').includes('next start') === false
+        const hasNoStartScript = !pkgJson.scripts?.start
+        // SPA if: uses vite/CRA with no start, OR has a dist/build folder after build
+        isSpa = (hasVite || hasCra || hasNextStatic) && (hasNoStartScript || !(nodeStartCommand && nodeStartCommand.trim()))
+      }
+
+      if (isSpa) {
+        send('▶ Detected static SPA (Vite/CRA) — will build and serve as static files...')
         const prefix = nodeShellPrefix(nodeVersion)
         if (nodeInstallCommand && nodeInstallCommand.trim()) {
           send(`${nodeInstallCommand}…`)
-          const { stdout: installOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-          installOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
-        }
-        if (nodeBuildCommand && nodeBuildCommand.trim()) {
           try {
-            send(`${nodeBuildCommand}…`)
-            const { stdout: buildOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeBuildCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
-            buildOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
-            send('✓ Build complete')
-          } catch (e) {
-            send(`⚠ Build command failed: ${e.message}`)
-          }
-        } else {
-          send('(no build command, skipping)')
+            const { stdout: installOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
+            installOut.split('\n').filter(Boolean).slice(-8).forEach(l => send(l))
+          } catch (e) { send(`⚠ Install: ${e.message}`) }
         }
+        const buildCmd = (nodeBuildCommand && nodeBuildCommand.trim()) ? nodeBuildCommand.trim() : 'npm run build'
+        send(`${buildCmd}…`)
+        try {
+          const { stdout: buildOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${buildCmd} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
+          buildOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
+          send('✓ SPA build complete')
+        } catch (e) { send(`⚠ Build failed: ${e.message}`) }
+        // Switch effective type to static so nginx gets correct config below
+        // We set a flag and override the nginx block (handled in nginx config section)
+      } else {
+        // True Node.js server — install, build, and PM2 start
+        if (fs.existsSync(pkgPath)) {
+          const prefix = nodeShellPrefix(nodeVersion)
+          if (nodeInstallCommand && nodeInstallCommand.trim()) {
+            send(`${nodeInstallCommand}…`)
+            try {
+              const { stdout: installOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeInstallCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
+              installOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
+            } catch (e) { send(`⚠ Install: ${e.message}`) }
+          }
+          if (nodeBuildCommand && nodeBuildCommand.trim()) {
+            try {
+              send(`${nodeBuildCommand}…`)
+              const { stdout: buildOut } = await execAsync(`cd ${shellQuote(sitePath)} && ${prefix}${nodeBuildCommand} 2>&1`, { timeout: 240000, maxBuffer: 1024 * 1024 * 10 })
+              buildOut.split('\n').filter(Boolean).slice(-12).forEach(l => send(l))
+              send('✓ Build complete')
+            } catch (e) { send(`⚠ Build command failed: ${e.message}`) }
+          }
+        }
+        try {
+          await execAsync(`pm2 delete ${shellQuote(domain)} 2>/dev/null || true`)
+          const prefix = nodeShellPrefix(nodeVersion)
+          const startCommand = nodeStartCommand && nodeStartCommand.trim()
+            ? nodeStartCommand.trim()
+            : pkgJson.scripts?.start
+              ? 'npm start'
+              : fs.existsSync(path.join(sitePath, 'server.js')) ? 'node server.js'
+              : fs.existsSync(path.join(sitePath, 'app.js')) ? 'node app.js'
+              : 'node index.js'
+          const pm2Command = `cd ${shellQuote(sitePath)} && PORT=${parseInt(port) || 3000} ${prefix}${startCommand}`
+          await execAsync(`pm2 start bash --name ${shellQuote(domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`, { timeout: 60000 })
+          await execAsync('pm2 save 2>/dev/null || true')
+          send(`✓ PM2 started: ${domain} on port ${port}`)
+        } catch (e) { send(`⚠ PM2: ${e.message}`) }
       }
-      try {
-        await execAsync(`pm2 delete ${shellQuote(domain)} 2>/dev/null || true`)
-        const prefix = nodeShellPrefix(nodeVersion)
-        const startCommand = nodeStartCommand && nodeStartCommand.trim()
-          ? nodeStartCommand.trim()
-          : fs.existsSync(path.join(sitePath, 'server.js')) ? 'node server.js' : fs.existsSync(path.join(sitePath, 'app.js')) ? 'node app.js' : 'node index.js'
-        const pm2Command = `cd ${shellQuote(sitePath)} && PORT=${parseInt(port) || 3000} ${prefix}${startCommand}`
-        await execAsync(`pm2 start bash --name ${shellQuote(domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`, { timeout: 60000 })
-        await execAsync('pm2 save 2>/dev/null || true')
-        send(`✓ PM2 started: ${domain} on port ${port}`)
-      } catch (e) { send(`⚠ PM2: ${e.message}`) }
     }
 
     // --- Python / Flask: virtualenv, pip packages, PM2 daemon running ────────────────────────
@@ -1373,15 +1459,40 @@ if __name__ == '__main__':
     // --- Nginx config ────────────────────────────────────────────────────────
     const phpRoot = phpPreset === 'laravel' && fs.existsSync(path.join(sitePath, 'public')) ? `${sitePath}/public` : sitePath
     const requestedNodeOutput = nodeOutputDir ? path.join(sitePath, nodeOutputDir) : ''
-    const webRoot = type==='static'
-      ? (fs.existsSync(path.join(sitePath,'dist'))?`${sitePath}/dist`:fs.existsSync(path.join(sitePath,'build'))?`${sitePath}/build`:sitePath)
+
+    // Detect SPA build output directory (dist > build > out > public > root)
+    const detectBuildDir = (base) => {
+      for (const d of ['dist', 'build', 'out', '.next/static']) {
+        if (fs.existsSync(path.join(base, d))) return `${base}/${d}`
+      }
+      return base
+    }
+
+    // Re-check SPA flag (set during node section above)
+    let isSpaForNginx = false
+    if (type === 'node') {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(sitePath, 'package.json'), 'utf8'))
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies }
+        const hasVite = !!deps.vite
+        const hasCra = !!deps['react-scripts']
+        const hasNoStart = !pkg.scripts?.start
+        isSpaForNginx = (hasVite || hasCra) && (hasNoStart || !(nodeStartCommand && nodeStartCommand.trim()))
+      } catch {}
+    }
+
+    const webRoot = type === 'static'
+      ? detectBuildDir(sitePath)
       : type === 'php'
         ? phpRoot
-        : requestedNodeOutput && fs.existsSync(requestedNodeOutput)
-          ? requestedNodeOutput
-          : sitePath
+        : isSpaForNginx
+          ? detectBuildDir(sitePath)
+          : requestedNodeOutput && fs.existsSync(requestedNodeOutput)
+            ? requestedNodeOutput
+            : sitePath
+
     let nginxConf
-    if (type==='proxy' || type==='node' || type==='python' || type==='flask') {
+    if ((type==='proxy' || type==='node' || type==='python' || type==='flask') && !isSpaForNginx) {
       nginxConf = `server {
     listen 80;
     listen [::]:80;
@@ -1397,15 +1508,19 @@ if __name__ == '__main__':
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 75s;
     }
-    }`
+}`
     } else {
+      // Static / SPA / PHP — file serving
+      const spaNote = isSpaForNginx ? `# SPA (Vite/React) — served as static files from ${webRoot}\n    ` : ''
       nginxConf = `server {
     listen 80;
     listen [::]:80;
     server_name ${domain};
     client_max_body_size 512M;
-    root ${webRoot};
+    ${spaNote}root ${webRoot};
     index index.html${type==='php'?' index.php':''};
     gzip on;
     gzip_types text/plain text/css application/json application/javascript application/xml image/svg+xml;
@@ -1413,6 +1528,9 @@ if __name__ == '__main__':
     location / { try_files $uri $uri/ ${type==='php' ? '/index.php?$query_string' : '/index.html'}; }
     ${type==='php'?phpLocationBlock(phpVersion):''}
 }`
+      if (isSpaForNginx) {
+        send(`✓ SPA detected — serving static files from ${webRoot} (no PM2 needed)`)
+      }
     }
 
     const confPath = `/etc/nginx/sites-available/${domain}`
@@ -1431,9 +1549,11 @@ if __name__ == '__main__':
 
     // --- SSL ─────────────────────────────────────────────────────────────────
     if (ssl === 'true') {
-      send('Running certbot…')
+      send('▶ Requesting SSL certificate from Let\'s Encrypt (certbot)...')
       try {
-        const { stdout: certOut } = await execAsync(`certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain} 2>&1`, { timeout: 120000 })
+        const certbotAccount = getCertbotAccount(domain)
+        const accountFlag = certbotAccount ? ` --account ${certbotAccount}` : ''
+        const { stdout: certOut } = await execAsync(`certbot --nginx -d ${domain} --non-interactive --agree-tos -m admin@${domain}${accountFlag} 2>&1`, { timeout: 120000 })
         certOut.split('\n').filter(Boolean).forEach(l => send(l))
         send('✓ SSL certificate installed')
       } catch (e) { send(`⚠ SSL failed: ${e.message}`) }

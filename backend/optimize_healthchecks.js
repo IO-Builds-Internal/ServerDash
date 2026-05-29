@@ -73,8 +73,8 @@ for (const filepath of filesToOptimize) {
           if (resources) {
             const limits = resources.get('limits');
             if (limits) {
-              limits.set('memory', '512M');
-              console.log(`  Increased analytics memory limit to 512M in ${filepath}`);
+              limits.set('memory', '1024M');
+              console.log(`  Increased analytics memory limit to 1024M in ${filepath}`);
             }
           }
         }
