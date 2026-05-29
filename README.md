@@ -6,49 +6,51 @@
 
 ![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)
-![React](https://img.shields.io/badge/React-18-61dafb.svg)
+![React](https://img.shields.io/badge/React-19-61dafb.svg)
 ![Tailwind](https://img.shields.io/badge/Tailwind-v4-38bdf8.svg)
+![GPG Signed](https://img.shields.io/badge/Commits-GPG_Signed-success.svg)
 
-**A self-hosted VPS management dashboard. Manage websites, Docker containers, files, packages, and more — all from a beautiful dark-mode UI.**
+**A high-performance self-hosted VPS management dashboard. Manage websites, Docker containers, firewalls, analytics, backups, files, packages, and database stacks directly from a premium glassmorphic workspace.**
 
 </div>
 
 ---
 
-## ✨ Features
+## ✨ Premium Features
 
 | Module | Capabilities |
 |--------|-------------|
-| **Overview** | Real-time CPU/RAM/disk/network metrics, rolling 60s charts, load average |
-| **Websites** | Deploy static/Node/PHP sites, nginx config generation, PM2, SSL via certbot |
-| **File Manager** | Browse `/var/www`, upload/download/delete, Monaco editor preview |
-| **Docker Apps** | Card grid with live CPU/memory stats, deploy, start/stop/restart, live logs |
-| **Packages** | Search installed apt packages, install with SSE streaming, custom sudo exec |
-| **Supabase** | Self-hosted Supabase instances via docker-compose, pg_dump backup |
-| **SMTP & Mail** | SMTP config, test email, email logs, Postfix control |
-| **Settings** | VPS SSH config, API URL, alert thresholds |
+| **📊 Overview & Telemetry** | Real-time CPU, RAM, disk, and network throughput charts. Polled every 5 seconds, persisted to a 24-hour historical JSON store. |
+| **🌐 Websites & Nginx** | Wizard for static, Node.js (PM2-ready), and PHP (Laravel/WordPress) deployments. Configures Nginx templates, virtual directory jails, and secures endpoints using automatic Certbot Let's Encrypt SSL. |
+| **🛡️ Firewall (UFW)** | Interactive UFW management dashboard. Add, delete, and view numbered firewall rules and comments. Toggle firewall status safely with port-22 recovery locks. |
+| **📈 Web Analytics Suite** | Real-time Nginx log parsing and TCP socket tracking. Render active visitors, unique IPs, referrers, browser distributions, and local **GeoIP2 Geolocation flags** on interactive charts. |
+| **📦 Snapshots & Self-Healing Backups** | High-speed, optimized backups using size-excluding `rsync`. Includes disk space usage meters, automated snapshot cleanups, and a 5-minute fault-tolerant restore queue with automatic MySQL and PM2 auto-revival. |
+| **🐳 Docker Apps** | Container grid showing real-time CPU/RAM limits, image/compose deployments, interactive lifecycle controls (start/stop/restart/delete stack), and live server-sent event (SSE) log streams. |
+| **⚡ Software Runtimes Center** | Displays current local runtimes (Node.js, Docker, Nginx, MariaDB) alongside upstream updates, with direct full-stream APT update/upgrade terminal controls. |
+| **📂 File Manager** | Browse the filesystem with safe path bounds. Multi-file uploads/downloads, directory creation, recursive folder deletions, and Monaco code editing. |
+| **📧 SMTP & Postfix Mail** | Test mail deliveries, inspect virtual mailbox allocations, view virtual postfix maillogs, and configure global Postfix relays. |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-                ┌─────────────────────┐
-                │   Browser (React)   │
-                │   Vite + Tailwind   │
-                │  Auth: Supabase     │
-                └──────────┬──────────┘
-                           │ HTTPS + JWT
-                ┌──────────▼──────────┐
-                │  Express Backend    │
-                │  Node.js + SSH      │
-                │  Dockerode + nodemailer│
-                └──────┬──────┬───────┘
-                       │ SSH  │ Docker socket
-              ┌────────▼──┐ ┌─▼──────────────┐
-              │  Your VPS │ │ Docker Engine  │
-              │  (Ubuntu) │ │ (same host)    │
-              └───────────┘ └────────────────┘
+                 ┌─────────────────────┐
+                 │   Browser (React)   │
+                 │   Vite + Tailwind   │
+                 │  Auth: Local JWT    │
+                 └──────────┬──────────┘
+                            │ HTTPS + JWT (Port 4001)
+                 ┌──────────▼──────────┐
+                 │  Express Backend    │
+                 │  Node.js (Direct)   │
+                 │  Dockerode + UFW    │
+                 └──────────┬──────────┘
+                            │ Direct Local Shell Exec
+                 ┌──────────▼──────────┐
+                 │  Your Local VPS     │
+                 │  (Ubuntu / Debian)  │
+                 └─────────────────────┘
 ```
 
 ---
@@ -58,7 +60,7 @@
 ServerDash features a stunning, state-of-the-art glassmorphic dark-mode user interface designed to maximize accessibility and administrative clarity:
 
 ### 🛡️ Dashboard Gateway & Authentication
-A secure, responsive login gateway protecting all administrative API interfaces.
+A secure, timing-safe cryptographically protected login gateway guarding all administrative API interfaces.
 ![ServerDash Login Gateway](./assets/dashboard_login.png)
 
 ### 📊 Real-Time Server Observability Overview
@@ -77,31 +79,40 @@ This script automatically provisions all OS libraries, configures reverse-proxy 
 To begin, simply execute the following command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iobuilds/ServerDash/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/IO-Builds-Internal/ServerDash/main/install.sh | bash
 ```
 
 ---
 
 ### 🛠️ Manual Configuration & Development
 
-If you prefer to configure components manually, follow these standard steps:
+If you prefer to configure and run the services manually, follow these standard steps:
 
 #### 1. Clone & Configure
 ```bash
-git clone https://github.com/iobuilds/ServerDash.git
+git clone https://github.com/IO-Builds-Internal/ServerDash.git
 cd ServerDash
 ```
 
-#### 2. Local Runtimes
+#### 2. Install Dependencies
 ```bash
-# Terminal 1 — Launch Backend Service
-cd backend && npm install && npm start
+# Install backend dependencies
+cd backend && npm install
 
-# Terminal 2 — Launch Frontend Interface
-cd frontend && npm install && npm run dev
+# Install frontend dependencies
+cd ../frontend && npm install
 ```
 
----
+#### 3. Start Local Development
+```bash
+# Terminal 1 — Launch Backend Service
+cd backend && npm run dev
+
+# Terminal 2 — Launch Frontend Interface
+cd frontend && npm run dev
+```
+
+***
 
 ## 🔧 Environment Variables
 
@@ -109,32 +120,28 @@ cd frontend && npm install && npm run dev
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `VITE_SUPABASE_URL` | ✅ | Your Supabase project URL |
-| `VITE_SUPABASE_ANON_KEY` | ✅ | Supabase anonymous key |
-| `VITE_API_URL` | ✅ | Backend API URL (e.g. `http://your-vps:3001`) |
+| `VITE_API_URL` | ✅ | Backend API URL (e.g. `http://<vps-ip>:4001`) |
 
 ### Backend (`backend/.env`)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SUPABASE_URL` | ✅ | Supabase project URL (for JWT verification) |
-| `SUPABASE_SERVICE_ROLE_KEY` | ✅ | Supabase service role key |
-| `VPS_HOST` | ✅ | VPS IP address or hostname |
-| `VPS_USER` | ✅ | SSH username (e.g. `root`) |
-| `VPS_KEY_PATH` | ✅ | Path to SSH private key |
-| `VPS_PORT` | ❌ | SSH port (default: `22`) |
-| `ALLOWED_ORIGIN` | ✅ | Frontend domain for CORS |
-| `PORT` | ❌ | Backend port (default: `3001`) |
+| `ADMIN_EMAIL` | ✅ | Panel Admin Email (default: `admin@serverdash.local`) |
+| `ADMIN_PASSWORD` | ✅ | Panel Admin Password (default: `ServerDash2026!`) |
+| `LOCAL_JWT_SECRET` | ✅ | Secret key for signing dashboard session JWTs |
+| `LOCAL_JWT_EXPIRES` | ❌ | Token expiration time (default: `8h`) |
+| `PORT` | ❌ | Backend port (default: `4001`) |
+| `ALLOWED_ORIGIN` | ❌ | Frontend domain URL allowed for CORS |
 
----
+***
 
 ## 📁 Project Structure
 
 ```
 ServerDash/
-├── frontend/                   # React + Vite + Tailwind v4
+├── frontend/                   # React 19 + Vite 8 + Tailwind v4
 │   ├── src/
-│   │   ├── pages/              # One file per dashboard section
+│   │   ├── pages/              # Clean dashboards & views
 │   │   │   ├── LoginPage.jsx
 │   │   │   ├── OverviewPage.jsx
 │   │   │   ├── WebsitesPage.jsx
@@ -142,49 +149,44 @@ ServerDash/
 │   │   │   ├── DockerPage.jsx
 │   │   │   ├── PackagesPage.jsx
 │   │   │   ├── SupabasePage.jsx
-│   │   │   ├── SmtpPage.jsx
+│   │   │   ├── FirewallShieldPage.jsx  # Host firewall rules
+│   │   │   ├── SnapshotsPage.jsx       # Dynamic server backup engine
+│   │   │   ├── AnalyticsPage.jsx       # real-time GeoIP analytics
 │   │   │   └── SettingsPage.jsx
 │   │   ├── components/
-│   │   │   ├── Sidebar.jsx     # Collapsible with connection status
+│   │   │   ├── Sidebar.jsx     # Nav controls
 │   │   │   └── ProtectedRoute.jsx
 │   │   ├── contexts/
-│   │   │   └── AuthContext.jsx # Supabase auth state
+│   │   │   └── AuthContext.jsx # Local JWT auth client
 │   │   ├── lib/
-│   │   │   ├── api.js          # Axios with JWT injection
-│   │   │   ├── supabase.js
-│   │   │   └── utils.js
-│   │   └── index.css           # Tailwind v4 + CSS custom properties
-│   └── Dockerfile
+│   │   │   └── api.js          # Axios client with JWT headers
+│   │   └── index.css           # Premium Tailwind variables
 │
-├── backend/                    # Node.js + Express
+├── backend/                    # Node.js + Express 5 API
 │   ├── src/
 │   │   ├── routes/
-│   │   │   ├── metrics.js      # SSH: top/free/df/uptime
-│   │   │   ├── sites.js        # nginx + PM2 + certbot
-│   │   │   ├── docker.js       # dockerode
-│   │   │   ├── packages.js     # apt + SSE streaming
-│   │   │   ├── files.js        # SFTP file operations
-│   │   │   ├── smtp.js         # nodemailer + Postfix
-│   │   │   └── supabase.js     # Self-hosted Supabase
-│   │   ├── authMiddleware.js   # Supabase JWT validation
-│   │   ├── sshPool.js          # SSH connection pool
-│   │   └── logger.js           # Winston
-│   ├── server.js               # Express app entry
-│   └── Dockerfile
-│
-├── docker-compose.yml
-└── README.md
+│   │   │   ├── metrics.js      # Proc telemetry & hist store
+│   │   │   ├── sites.js        # Nginx config wizards & certbot
+│   │   │   ├── docker.js       # Container streams & stack management
+│   │   │   ├── packages.js     # APT packages & upgrades
+│   │   │   ├── files.js        # File system operations
+│   │   │   ├── firewall.js     # UFW rules controller
+│   │   │   ├── analytics.js    # Nginx Weblogs parser & TCP sockets
+│   │   │   ├── snapshots.js    # Optimized backup rsync queue
+│   │   │   └── supabase.js     # Supabase stack installer
+│   │   ├── authMiddleware.js   # JWT token validator
+│   │   └── logger.js           # Winston logger
+│   └── server.js               # Express app entry
 ```
 
 ---
 
-## 🔒 Security Notes
+## 🔒 Security Posture
 
-- All API routes require a valid Supabase JWT token
-- Rate limiting: 120 req/min general, 10 req/min for exec
-- SSH commands are logged with Winston
-- File manager restricts access to safe paths (`/var/www`, `/opt`, etc.)
-- The `exec` endpoint blocks dangerous patterns (`rm -rf /`, `mkfs`, etc.)
+* **Session Tokens**: All API routes require cryptographically secure HS256 JWT tokens.
+* **Timing-Safe Login**: Uses Buffer-level `crypto.timingSafeEqual` comparisons during login authentication to prevent side-channel leaks.
+* **Rate Limiting**: Integrated `express-rate-limit` allowing `120` req/min for general API calls and a tight `10` req/min limit on console shell execution.
+* **Safe Terminal Streaming**: Packages & command console execution streams use a restricted danger-pattern regex blocker to mitigate malicious host shell scripts.
 
 ---
 
@@ -192,10 +194,8 @@ ServerDash/
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit changes: `git commit -m 'Add my feature'`
+3. Commit changes: `git commit -S -m 'Add my feature'` (Remember to sign your commits!)
 4. Push and open a Pull Request
-
-Please follow the existing code style and add JSDoc comments to new functions.
 
 ---
 
