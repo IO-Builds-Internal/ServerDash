@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import {
   LayoutDashboard, Globe, Package, FolderOpen, Container,
   Database, Mail, Settings, ChevronLeft, ChevronRight,
-  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon, HardDrive, Archive, Shield, LineChart
+  LogOut, Server, Wifi, WifiOff, Activity, Sun, Moon, HardDrive, Archive, Shield, LineChart, Cpu
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
 import { useTheme } from '../contexts/ThemeContext'
@@ -22,6 +22,7 @@ const navItems = [
   { path: '/snapshots', icon: Archive, label: 'Server Snapshots' },
   { path: '/ports', icon: Activity, label: 'Ports Monitor' },
   { path: '/firewall', icon: Shield, label: 'Firewall Shield' },
+  { path: '/processes', icon: Cpu, label: 'Task Manager' },
   { path: '/settings', icon: Settings, label: 'Settings' },
 ]
 

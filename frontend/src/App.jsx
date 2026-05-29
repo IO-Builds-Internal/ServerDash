@@ -20,6 +20,7 @@ import FtpPage from './pages/FtpPage'
 import SnapshotsPage from './pages/SnapshotsPage'
 import FirewallPage from './pages/FirewallPage'
 import AnalyticsPage from './pages/AnalyticsPage'
+import ProcessesPage from './pages/ProcessesPage'
 import { Server } from 'lucide-react'
 import { BrandingProvider, useBranding } from './contexts/BrandingContext'
 import { ThemeProvider } from './contexts/ThemeContext'
@@ -46,6 +47,7 @@ function DashboardLayout() {
           <Route path="/snapshots" element={<SnapshotsPage />} />
           <Route path="/ports" element={<PortsPage />} />
           <Route path="/firewall" element={<FirewallPage />} />
+          <Route path="/processes" element={<ProcessesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>
