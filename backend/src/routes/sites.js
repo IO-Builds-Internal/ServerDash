@@ -1299,10 +1299,10 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
         const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
         const hasVite = !!deps.vite || !!(pkgJson.scripts?.dev || '').includes('vite')
         const hasCra = !!deps['react-scripts'] || !!(pkgJson.scripts?.start || '').includes('react-scripts')
-        const hasNextStatic = !!deps.next && !!(pkgJson.scripts?.start || '').includes('next start') === false
+        const hasNextStatic = !!deps.next && !((pkgJson.scripts?.start || '').includes('next start'))
         const hasNoStartScript = !pkgJson.scripts?.start
-        // SPA if: uses vite/CRA with no start, OR has a dist/build folder after build
-        isSpa = (hasVite || hasCra || hasNextStatic) && (hasNoStartScript || !(nodeStartCommand && nodeStartCommand.trim()))
+        const startIsFrontend = pkgJson.scripts?.start && (pkgJson.scripts.start.includes('vite') || pkgJson.scripts.start.includes('react-scripts'))
+        isSpa = (hasVite || hasCra || hasNextStatic) && (hasNoStartScript || startIsFrontend) && !(nodeStartCommand && nodeStartCommand.trim())
       }
 
       if (isSpa) {
@@ -1474,10 +1474,12 @@ if __name__ == '__main__':
       try {
         const pkg = JSON.parse(fs.readFileSync(path.join(sitePath, 'package.json'), 'utf8'))
         const deps = { ...pkg.dependencies, ...pkg.devDependencies }
-        const hasVite = !!deps.vite
-        const hasCra = !!deps['react-scripts']
+        const hasVite = !!deps.vite || !!(pkg.scripts?.dev || '').includes('vite')
+        const hasCra = !!deps['react-scripts'] || !!(pkg.scripts?.start || '').includes('react-scripts')
+        const hasNextStatic = !!deps.next && !((pkg.scripts?.start || '').includes('next start'))
         const hasNoStart = !pkg.scripts?.start
-        isSpaForNginx = (hasVite || hasCra) && (hasNoStart || !(nodeStartCommand && nodeStartCommand.trim()))
+        const startIsFrontend = pkg.scripts?.start && (pkg.scripts.start.includes('vite') || pkg.scripts.start.includes('react-scripts'))
+        isSpaForNginx = (hasVite || hasCra || hasNextStatic) && (hasNoStart || startIsFrontend) && !(nodeStartCommand && nodeStartCommand.trim())
       } catch {}
     }
 
