@@ -66,7 +66,7 @@ function Wizard({ onClose, onCreated }) {
   const [runNodeBuild, setRunNodeBuild] = useState(false)
   const [runNodeStart, setRunNodeStart] = useState(true)
   const [nodeOutputDir, setNodeOutputDir] = useState('')
-  const [phpPreset, setPhpPreset] = useState('blank')
+  const [phpPreset, setPhpPreset] = useState('wordpress')
   const [phpVersion, setPhpVersion] = useState('8.2')
   const [wpTitle, setWpTitle] = useState('')
   const [wpAdminUser, setWpAdminUser] = useState('admin')
@@ -225,7 +225,19 @@ function Wizard({ onClose, onCreated }) {
               </div>
               <div style={{ marginTop:18 }}>
                 <label className="label">Domain name</label>
-                <input className="input" value={domain} onChange={e=>setDomain(e.target.value)} placeholder="mysite.com" />
+                <input 
+                  className="input" 
+                  value={domain} 
+                  onChange={e => {
+                    let val = e.target.value;
+                    // Auto-sanitize protocol headers and paths
+                    val = val.replace(/^(https?:\/\/)?(www\.)?/, '');
+                    val = val.split('/')[0];
+                    val = val.trim();
+                    setDomain(val);
+                  }} 
+                  placeholder="mysite.com" 
+                />
               </div>
             </div>
           )}
