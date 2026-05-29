@@ -3,7 +3,7 @@ import { useLocation, useNavigate as useReactRouterNavigate } from 'react-router
 import {
   Folder, File, ChevronRight, ChevronUp, Upload, Download,
   Trash2, Plus, Edit2, RefreshCw, X, Save, FolderPlus, Eye,
-  ArrowLeft, Search, Copy, Check
+  ArrowLeft, Search, Copy, Check, Scissors, Clipboard
 } from 'lucide-react'
 import api from '../lib/api'
 import { localAuth } from '../lib/auth'
@@ -110,6 +110,7 @@ export default function FilesPage({ initialPath, jailedPath }) {
   const [showNewFolder, setShowNewFolder] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [copied, setCopied] = useState(null)
+  const [clipboard, setClipboard] = useState({ action: null, paths: [] })
   const fileInput = useRef()
 
   const load = useCallback(async (p = path) => {
@@ -199,6 +200,53 @@ export default function FilesPage({ initialPath, jailedPath }) {
     setCopied(name); setTimeout(() => setCopied(null), 2000)
   }
 
+  const handleCopy = () => {
+    if (!selected.size) return
+    const pathsToCopy = [...selected].map(n => `${path}/${n}`.replace(/\/+/g, '/'))
+    setClipboard({ action: 'copy', paths: pathsToCopy })
+    setSelected(new Set())
+  }
+
+  const handleCut = () => {
+    if (!selected.size) return
+    const pathsToCut = [...selected].map(n => `${path}/${n}`.replace(/\/+/g, '/'))
+    setClipboard({ action: 'cut', paths: pathsToCut })
+    setSelected(new Set())
+  }
+
+  const handlePaste = async () => {
+    if (!clipboard.paths.length) return
+    try {
+      const endpoint = clipboard.action === 'copy' ? '/api/files/copy' : '/api/files/move'
+      await api.post(endpoint, { from: clipboard.paths, to: path })
+      if (clipboard.action === 'cut') {
+        setClipboard({ action: null, paths: [] })
+      }
+      load()
+    } catch (err) {
+      alert(`Paste failed: ${err.response?.data?.error || err.message}`)
+    }
+  }
+
+  const moveSelectedUp = async () => {
+    if (!selected.size) return
+    const parts = path.split('/').filter(Boolean)
+    if (parts.length === 0 || (jailedPath && path === jailedPath)) {
+      alert('Cannot move further up. You are at the root path.')
+      return
+    }
+    parts.pop()
+    const parentPath = '/' + parts.join('/') || '/'
+    
+    const pathsToMove = [...selected].map(n => `${path}/${n}`.replace(/\/+/g, '/'))
+    try {
+      await api.post('/api/files/move', { from: pathsToMove, to: parentPath })
+      load()
+    } catch (err) {
+      alert(`Move failed: ${err.response?.data?.error || err.message}`)
+    }
+  }
+
   const filtered = files.filter(f => !search || f.name.toLowerCase().includes(search.toLowerCase()))
   const dirs = filtered.filter(f => f.type === 'dir').sort((a, b) => a.name.localeCompare(b.name))
   const fls = filtered.filter(f => f.type !== 'dir').sort((a, b) => a.name.localeCompare(b.name))
@@ -259,7 +307,38 @@ export default function FilesPage({ initialPath, jailedPath }) {
 
         {/* Actions */}
         {selected.size > 0 && (
-          <button className="btn btn-danger btn-sm" onClick={deleteSelected}><Trash2 size={13} /> Delete ({selected.size})</button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button className="btn btn-secondary btn-sm animate-hover" onClick={handleCopy} style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="Copy selected items to clipboard">
+              <Copy size={13} /> Copy
+            </button>
+            <button className="btn btn-secondary btn-sm animate-hover" onClick={handleCut} style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="Cut selected items to clipboard">
+              <Scissors size={13} /> Cut
+            </button>
+            {path !== '/' && (!jailedPath || path !== jailedPath) && (
+              <button className="btn btn-secondary btn-sm animate-hover" onClick={moveSelectedUp} style={{ display: 'flex', alignItems: 'center', gap: 4 }} title="Move selected items to the parent folder">
+                <ChevronUp size={13} /> Move to Parent
+              </button>
+            )}
+            <button className="btn btn-danger btn-sm animate-hover" onClick={deleteSelected} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Trash2 size={13} /> Delete ({selected.size})
+            </button>
+          </div>
+        )}
+        {clipboard.paths.length > 0 && (
+          <button 
+            className="btn btn-primary btn-sm animate-pulse-light" 
+            onClick={handlePaste} 
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: 6, 
+              background: 'linear-gradient(135deg, var(--color-primary) 0%, #4f46e5 100%)', 
+              borderColor: 'var(--color-primary)' 
+            }} 
+            title={`Paste ${clipboard.paths.length} item(s) from clipboard into current directory`}
+          >
+            <Clipboard size={13} /> Paste ({clipboard.paths.length} item{clipboard.paths.length !== 1 ? 's' : ''})
+          </button>
         )}
         <button className="btn btn-secondary btn-sm" onClick={() => setShowNewFolder(v => !v)}><FolderPlus size={13} /> New Folder</button>
         <button className="btn btn-secondary btn-sm" onClick={() => fileInput.current.click()} disabled={uploading}>

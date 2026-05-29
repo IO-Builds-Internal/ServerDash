@@ -166,4 +166,46 @@ router.get('/download', async (req, res) => {
   }
 })
 
+// POST /api/files/copy
+router.post('/copy', async (req, res) => {
+  const { from, to } = req.body
+  if (!from || !Array.isArray(from) || !to) return res.status(400).json({ error: 'from array and to destination required' })
+  const safeDst = path.normalize(to)
+  if (!isSafePath(safeDst)) return res.status(403).json({ error: 'Access denied' })
+  const errors = []
+  for (const src of from) {
+    const safeSrc = path.normalize(src)
+    if (!isSafePath(safeSrc)) { errors.push(`Blocked: ${src}`); continue }
+    try {
+      await execAsync(`cp -r "${safeSrc}" "${safeDst}"`)
+      logger.info('Copied', { from: safeSrc, to: safeDst })
+    } catch (e) {
+      errors.push(`${src}: ${e.message}`)
+    }
+  }
+  if (errors.length) res.status(207).json({ success: false, errors })
+  else res.json({ success: true })
+})
+
+// POST /api/files/move
+router.post('/move', async (req, res) => {
+  const { from, to } = req.body
+  if (!from || !Array.isArray(from) || !to) return res.status(400).json({ error: 'from array and to destination required' })
+  const safeDst = path.normalize(to)
+  if (!isSafePath(safeDst)) return res.status(403).json({ error: 'Access denied' })
+  const errors = []
+  for (const src of from) {
+    const safeSrc = path.normalize(src)
+    if (!isSafePath(safeSrc)) { errors.push(`Blocked: ${src}`); continue }
+    try {
+      await execAsync(`mv "${safeSrc}" "${safeDst}"`)
+      logger.info('Moved', { from: safeSrc, to: safeDst })
+    } catch (e) {
+      errors.push(`${src}: ${e.message}`)
+    }
+  }
+  if (errors.length) res.status(207).json({ success: false, errors })
+  else res.json({ success: true })
+})
+
 module.exports = router
