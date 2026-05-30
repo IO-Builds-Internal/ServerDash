@@ -1662,7 +1662,7 @@ export default function SiteDetailPage() {
                     <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Service Status</div>
                     <div style={{ fontSize: '1.1rem', fontWeight: 800, color: postfixStatus.status === 'running' ? 'var(--color-success)' : 'var(--color-danger)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', background: postfixStatus.status === 'running' ? 'var(--color-success)' : 'var(--color-danger)' }}></span>
-                      {postfixStatus.status.toUpperCase()}
+                      {(postfixStatus.status || 'unknown').toUpperCase()}
                     </div>
                   </div>
                   <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
@@ -1935,8 +1935,8 @@ export default function SiteDetailPage() {
                               <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>Local Mailbox</span>
                             </td>
                             <td style={{ padding: '12px 16px', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                              <div>User: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-primary)', fontWeight: 700, padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 4 }}>{m.systemUsername || `${(mailSettings.domain || site.domain).split('.')[0]}_${m.username}`}</code></div>
-                              <div style={{ marginTop: 4, fontSize: '0.7rem', color: 'var(--color-text-muted)', opacity: 0.8 }}>Server: mail.{mailSettings.domain || site.domain}</div>
+                              <div>User: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-primary)', fontWeight: 700, padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 4 }}>{m.systemUsername || `${(mailSettings.domain || site?.domain || '').split('.')[0] || 'mail'}_${m.username}`}</code></div>
+                              <div style={{ marginTop: 4, fontSize: '0.7rem', color: 'var(--color-text-muted)', opacity: 0.8 }}>Server: mail.{mailSettings.domain || site?.domain}</div>
                             </td>
                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                               <button
