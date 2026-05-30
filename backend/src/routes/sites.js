@@ -1991,7 +1991,7 @@ router.post('/:id/mail/test', async (req, res) => {
     })
 
     await transporter.sendMail({
-      from: smtpConfig.username || `noreply@${site.domain}`,
+      from: smtpConfig.username || `noreplay@${site.domain}`,
       to,
       subject: `ServerDash Test Email for ${site.domain}`,
       text: `This is a test email using the custom isolated SMTP server configuration for ${site.domain}.`,
