@@ -1986,8 +1986,8 @@ router.post('/:id/mail/test', async (req, res) => {
       host: smtpConfig.host,
       port: parseInt(smtpConfig.port) || 587,
       secure: smtpConfig.encryption === 'SSL',
-      auth: { user: smtpConfig.username, pass: smtpConfig.password },
-      tls: smtpConfig.encryption === 'TLS' ? { rejectUnauthorized: false } : undefined,
+      auth: smtpConfig.username ? { user: smtpConfig.username, pass: smtpConfig.password } : undefined,
+      tls: { rejectUnauthorized: false },
     })
 
     await transporter.sendMail({
