@@ -398,7 +398,18 @@ export default function SiteDetailPage() {
     setMailError(null)
     try {
       const { data } = await api.get(`/api/sites/${id}/mail`)
-      setMailSettings(data)
+      setMailSettings(prev => ({
+        ...prev,
+        ...data,
+        smtp: {
+          host: '',
+          port: '587',
+          encryption: 'TLS',
+          username: '',
+          password: '',
+          ...(data?.smtp || {})
+        }
+      }))
       await fetchPostfixStatus()
     } catch (e) {
       setMailError(e.response?.data?.error || e.message)
