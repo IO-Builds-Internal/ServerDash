@@ -746,6 +746,23 @@ export default function WebsitesPage() {
                 </div>
               </div>
 
+              {site.warning && (
+                <div style={{ 
+                  fontSize: '0.75rem', 
+                  color: 'var(--color-warning)', 
+                  background: 'rgba(245, 158, 11, 0.08)', 
+                  border: '1px solid rgba(245, 158, 11, 0.2)', 
+                  padding: '8px 12px', 
+                  borderRadius: 8, 
+                  display: 'flex', 
+                  alignItems: 'flex-start', 
+                  gap: 8 
+                }}>
+                  <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>{site.warning}</span>
+                </div>
+              )}
+
               {/* Manage Action */}
               <div style={{ marginTop: 'auto', display: 'flex', gap: 8 }}>
                 {site.isSystemPanel ? (

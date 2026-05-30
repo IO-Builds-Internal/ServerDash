@@ -374,6 +374,64 @@ function parseNginxConfig(content, filename) {
   }
 }
 
+async function enrichSitesWithDiagnostics(sites) {
+  const listeningPorts = new Set()
+  try {
+    const { stdout } = await execAsync("ss -tln -H | awk '{print $4}' | sed 's/.*://'")
+    stdout.split('\n').filter(Boolean).forEach(p => {
+      const portNum = parseInt(p.trim(), 10)
+      if (!isNaN(portNum)) listeningPorts.add(portNum)
+    })
+  } catch (e) {
+    logger.warn('Failed to get listening ports', { error: e.message })
+  }
+
+  let pm2List = []
+  try {
+    const { stdout } = await execAsync("pm2 jlist 2>/dev/null || echo '[]'")
+    pm2List = JSON.parse(stdout.trim() || '[]')
+  } catch (e) {
+    logger.warn('Failed to get PM2 process list', { error: e.message })
+  }
+
+  for (const site of sites) {
+    const pm2Proc = pm2List.find(p => p.name === site.domain || p.name === site.id)
+    if (pm2Proc) {
+      site.pm2 = {
+        status: pm2Proc.pm2_env?.status,
+        restarts: pm2Proc.pm2_env?.restart_time || 0,
+        memory: pm2Proc.monit?.memory || 0,
+        cpu: pm2Proc.monit?.cpu || 0,
+        pid: pm2Proc.pid
+      }
+
+      if (pm2Proc.pm2_env?.status && pm2Proc.pm2_env?.status !== 'online') {
+        site.warning = `PM2 process is "${pm2Proc.pm2_env.status}". It might be crashed or stopped. Check its logs.`
+      }
+    }
+
+    if (site.proxyPort) {
+      const portNum = parseInt(site.proxyPort, 10)
+      if (!isNaN(portNum)) {
+        if (!listeningPorts.has(portNum)) {
+          site.warning = `Port Warning: Nginx is configured to proxy to port ${site.proxyPort}, but no service or process is currently listening on this port. Your site will show a 502 Bad Gateway until you start your app on port ${site.proxyPort}.`
+        }
+      }
+    }
+  }
+  return sites
+}
+
+async function getPm2Process(domain) {
+  try {
+    const { stdout } = await execAsync("pm2 jlist 2>/dev/null || echo '[]'")
+    const list = JSON.parse(stdout.trim() || '[]')
+    return list.find(p => p.name === domain)
+  } catch {
+    return null
+  }
+}
+
 // ── GET /api/sites ─────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
@@ -412,7 +470,8 @@ router.get('/', async (req, res) => {
       }
     } catch { /* /var/www might not exist */ }
 
-    res.json(sites)
+    const enrichedSites = await enrichSitesWithDiagnostics(sites)
+    res.json(enrichedSites)
   } catch (err) {
     logger.error('Sites list error', { error: err.message })
     res.status(500).json({ error: err.message })
@@ -484,7 +543,8 @@ router.get('/:id', async (req, res) => {
         if (site.type === 'php' || site.root) {
           site.database = getDatabaseCredentials(site.root)
         }
-        return res.json(site)
+        const [enrichedSite] = await enrichSitesWithDiagnostics([site])
+        return res.json(enrichedSite)
       }
     }
 
@@ -502,7 +562,8 @@ router.get('/:id', async (req, res) => {
         lastDeployed: null,
       }
       site.database = getDatabaseCredentials(site.root)
-      return res.json(site)
+      const [enrichedSite] = await enrichSitesWithDiagnostics([site])
+      return res.json(enrichedSite)
     }
 
     res.status(404).json({ error: 'Site not found' })
@@ -791,10 +852,22 @@ router.post('/:id/deploy', async (req, res) => {
       }
     }
 
+    let pkgJson = {}
+    try {
+      pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    } catch {}
+
     let installCmd = 'npm install --production'
+    if (pkgJson.scripts?.['install:all']) {
+      installCmd = 'npm run install:all'
+    } else if (pkgJson.workspaces) {
+      installCmd = 'npm install'
+    }
+
     let buildCmd = 'npm run build'
     let restartCmd = `pm2 restart "${site.domain}"`
     let nodeVersion = 'system'
+    let customStartCmd = null
 
     const metaPath = path.join(root, '.serverdash.json')
     if (fs.existsSync(metaPath)) {
@@ -804,6 +877,7 @@ router.post('/:id/deploy', async (req, res) => {
         if (meta.buildCommand !== undefined) buildCmd = meta.buildCommand
         if (meta.restartCommand !== undefined) restartCmd = meta.restartCommand
         if (meta.nodeVersion !== undefined) nodeVersion = meta.nodeVersion
+        if (meta.startCommand !== undefined) customStartCmd = meta.startCommand
       } catch (e) {}
     }
 
@@ -825,14 +899,46 @@ router.post('/:id/deploy', async (req, res) => {
       }
     }
 
-    if (restartCmd && restartCmd.trim()) {
+    const pm2Proc = await getPm2Process(site.domain)
+    if (pm2Proc) {
+      if (restartCmd && restartCmd.trim()) {
+        try {
+          send(`Restarting application: ${restartCmd}…`)
+          const { stdout: restartOut } = await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+          restartOut.split('\n').filter(Boolean).forEach(l => send(l))
+          send('✓ Application restarted')
+        } catch (e) {
+          send(`⚠ Restart failed: ${e.message}`)
+        }
+      }
+    } else {
       try {
-        send(`Restarting application: ${restartCmd}…`)
-        const { stdout: restartOut } = await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
-        restartOut.split('\n').filter(Boolean).forEach(l => send(l))
-        send('✓ Application restarted')
+        send(`⚠ PM2 process "${site.domain}" not found. Running self-healing startup…`)
+        
+        let resolvedStartCmd = customStartCmd
+        if (!resolvedStartCmd) {
+          resolvedStartCmd = pkgJson.scripts?.start
+            ? 'npm start'
+            : fs.existsSync(path.join(root, 'server.js')) ? 'node server.js'
+            : fs.existsSync(path.join(root, 'app.js'))    ? 'node app.js'
+            : fs.existsSync(path.join(root, 'index.js'))  ? 'node index.js'
+            : null
+        }
+
+        if (resolvedStartCmd) {
+          const appPort = site.proxyPort || 3000
+          const pm2Command = `cd ${shellQuote(root)} && PORT=${parseInt(appPort) || 3000} ${prefix}${resolvedStartCmd}`
+          send(`▶ PM2 start: ${resolvedStartCmd} (port ${appPort})`)
+          await execAsync(
+            `pm2 start bash --name ${shellQuote(site.domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`
+          )
+          await execAsync('pm2 save 2>/dev/null || true')
+          send('✓ Application successfully healed and started!')
+        } else {
+          send('⚠ Could not determine start command. Please set it in "Build & Start Settings" and start it manually.')
+        }
       } catch (e) {
-        send(`⚠ Restart failed: ${e.message}`)
+        send(`✗ Self-healing PM2 startup failed: ${e.message}`)
       }
     }
 
@@ -844,6 +950,7 @@ router.post('/:id/deploy', async (req, res) => {
   }
   res.end()
 })
+
 // ── POST /api/sites/:id/webhook — GitHub/GitLab Auto CI/CD Webhook ────────────
 router.post('/:id/webhook', async (req, res) => {
   const { id } = req.params
@@ -871,10 +978,22 @@ router.post('/:id/webhook', async (req, res) => {
           return
         }
 
+        let pkgJson = {}
+        try {
+          pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+        } catch {}
+
         let installCmd = 'npm install --production'
+        if (pkgJson.scripts?.['install:all']) {
+          installCmd = 'npm run install:all'
+        } else if (pkgJson.workspaces) {
+          installCmd = 'npm install'
+        }
+
         let buildCmd = 'npm run build'
         let restartCmd = `pm2 restart "${site.domain}"`
         let nodeVersion = 'system'
+        let customStartCmd = null
 
         const metaPath = path.join(root, '.serverdash.json')
         if (fs.existsSync(metaPath)) {
@@ -884,6 +1003,7 @@ router.post('/:id/webhook', async (req, res) => {
             if (meta.buildCommand !== undefined) buildCmd = meta.buildCommand
             if (meta.restartCommand !== undefined) restartCmd = meta.restartCommand
             if (meta.nodeVersion !== undefined) nodeVersion = meta.nodeVersion
+            if (meta.startCommand !== undefined) customStartCmd = meta.startCommand
           } catch (e) {}
         }
 
@@ -900,9 +1020,35 @@ router.post('/:id/webhook', async (req, res) => {
           }
         }
 
-        if (restartCmd && restartCmd.trim()) {
-          logger.info(`[${site.domain}] ${restartCmd}...`)
-          await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+        const pm2Proc = await getPm2Process(site.domain)
+        if (pm2Proc) {
+          if (restartCmd && restartCmd.trim()) {
+            logger.info(`[${site.domain}] ${restartCmd}...`)
+            await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+          }
+        } else {
+          logger.info(`[${site.domain}] PM2 process not found. Running self-healing startup...`)
+          let resolvedStartCmd = customStartCmd
+          if (!resolvedStartCmd) {
+            resolvedStartCmd = pkgJson.scripts?.start
+              ? 'npm start'
+              : fs.existsSync(path.join(root, 'server.js')) ? 'node server.js'
+              : fs.existsSync(path.join(root, 'app.js'))    ? 'node app.js'
+              : fs.existsSync(path.join(root, 'index.js'))  ? 'node index.js'
+              : null
+          }
+
+          if (resolvedStartCmd) {
+            const appPort = site.proxyPort || 3000
+            const pm2Command = `cd ${shellQuote(root)} && PORT=${parseInt(appPort) || 3000} ${prefix}${resolvedStartCmd}`
+            await execAsync(
+              `pm2 start bash --name ${shellQuote(site.domain)} -- -lc ${shellQuote(pm2Command)} 2>&1`
+            )
+            await execAsync('pm2 save 2>/dev/null || true')
+            logger.info(`[${site.domain}] Application successfully healed and started via webhook`)
+          } else {
+            logger.warn(`[${site.domain}] Could not determine start command for self-healing during webhook deploy`)
+          }
         }
 
         logger.info(`[${site.domain}] Deployment completed successfully via webhook`)
@@ -2002,6 +2148,107 @@ router.post('/:id/mail/test', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
+})
+
+// ── GET /api/sites/:id/mail/dns ────────────────────────────────────────────────
+router.get('/:id/mail/dns', async (req, res) => {
+  const site = resolveSiteRoot(req.params.id)
+  if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
+
+  const os = require('os')
+  let ip = '207.180.243.219' // Fallback to your VPS IP
+  try {
+    const nets = os.networkInterfaces()
+    let found = false
+    for (const name of Object.keys(nets)) {
+      if (name.startsWith('docker') || name.startsWith('br-') || name.startsWith('veth') || name.startsWith('lo')) {
+        continue
+      }
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          ip = net.address
+          found = true
+          break
+        }
+      }
+      if (found) break
+    }
+  } catch {}
+
+
+  const spf = `v=spf1 ip4:${ip} -all`
+  const dmarc = `v=DMARC1; p=none; rua=mailto:noreplay@${site.domain}`
+  
+  // Read DKIM from /etc/opendkim/keys/default.txt or similar if configured
+  let dkim = null
+  let dkimSelector = 'default'
+  try {
+    const dkimPath = '/etc/opendkim/keys/default.txt'
+    if (fs.existsSync(dkimPath)) {
+      const fileContent = fs.readFileSync(dkimPath, 'utf8')
+      const match = fileContent.match(/p=([A-Za-z0-9+/=]+)/)
+      if (match) {
+        dkim = `v=DKIM1; k=rsa; p=${match[1]}`
+      } else {
+        const pMatch = fileContent.match(/"p=([^"]+)"/)
+        if (pMatch) dkim = `v=DKIM1; k=rsa; p=${pMatch[1]}`
+      }
+    }
+  } catch {}
+
+  const runTest = req.query.test === 'true'
+  let testResults = null
+
+  if (runTest) {
+    const dns = require('dns').promises
+    testResults = {
+      spf: { present: false, valid: false, found: null },
+      dmarc: { present: false, valid: false, found: null },
+      dkim: { present: false, valid: false, found: null }
+    }
+    
+    // Test SPF
+    try {
+      const txts = await dns.resolveTxt(site.domain)
+      const spfRecord = txts.flat().find(r => r.startsWith('v=spf1'))
+      if (spfRecord) {
+        testResults.spf.present = true
+        testResults.spf.found = spfRecord
+        testResults.spf.valid = spfRecord.includes(ip)
+      }
+    } catch {}
+
+    // Test DMARC
+    try {
+      const txts = await dns.resolveTxt(`_dmarc.${site.domain}`)
+      const dmarcRecord = txts.flat().find(r => r.startsWith('v=DMARC1'))
+      if (dmarcRecord) {
+        testResults.dmarc.present = true
+        testResults.dmarc.found = dmarcRecord
+        testResults.dmarc.valid = dmarcRecord.includes('v=DMARC1')
+      }
+    } catch {}
+
+    // Test DKIM
+    try {
+      const txts = await dns.resolveTxt(`default._domainkey.${site.domain}`)
+      const dkimRecord = txts.flat().find(r => r.startsWith('v=DKIM1'))
+      if (dkimRecord) {
+        testResults.dkim.present = true
+        testResults.dkim.found = dkimRecord
+        testResults.dkim.valid = dkimRecord.includes('v=DKIM1')
+      }
+    } catch {}
+  }
+
+  res.json({
+    spf,
+    dmarc,
+    dkim,
+    dkimSelector,
+    ip,
+    testResults
+  })
 })
 
 // ── GET /api/sites/:id/backup ─────────────────────────────────────────────────

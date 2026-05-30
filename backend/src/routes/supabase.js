@@ -110,12 +110,15 @@ const getServerIP = () => {
   try {
     const nets = require('os').networkInterfaces()
     for (const name of Object.keys(nets)) {
+      if (name.startsWith('docker') || name.startsWith('br-') || name.startsWith('veth') || name.startsWith('lo')) {
+        continue
+      }
       for (const net of nets[name]) {
         if (net.family === 'IPv4' && !net.internal) return net.address
       }
     }
   } catch {}
-  return '127.0.0.1'
+  return '207.180.243.219' // Fallback to your VPS IP
 }
 
 // ── Persistence ────────────────────────────────────────────────────────────────

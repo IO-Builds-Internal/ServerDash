@@ -65,6 +65,12 @@ export default function SiteDetailPage() {
   const [postfixStatus, setPostfixStatus] = useState(null)
   const [postfixActionBusy, setPostfixActionBusy] = useState(null)
 
+  // DNS authentication states
+  const [dnsInfo, setDnsInfo] = useState(null)
+  const [dnsLoading, setDnsLoading] = useState(false)
+  const [dnsTesting, setDnsTesting] = useState(false)
+  const [dnsTestResults, setDnsTestResults] = useState(null)
+
   // Nginx Config Editor state
   const [configContent, setConfigContent] = useState('')
   const [configLoading, setConfigLoading] = useState(true)
@@ -418,6 +424,34 @@ export default function SiteDetailPage() {
     }
   }
 
+  const loadDnsInfo = async () => {
+    setDnsLoading(true)
+    try {
+      const r = await api.get(`/api/sites/${id}/mail/dns`)
+      setDnsInfo(r.data)
+      if (r.data.testResults) {
+        setDnsTestResults(r.data.testResults)
+      }
+    } catch (e) {}
+    setDnsLoading(false)
+  }
+
+  const testDnsRecords = async () => {
+    setDnsTesting(true)
+    try {
+      const r = await api.get(`/api/sites/${id}/mail/dns?test=true`)
+      setDnsTestResults(r.data.testResults)
+      if (r.data.testResults.spf.valid && r.data.testResults.dmarc.valid) {
+        setMailSuccess('DNS records successfully verified!')
+      } else {
+        setMailError('Some DNS records failed validation. Please ensure they are added correctly at your registrar.')
+      }
+    } catch (e) {
+      setMailError('DNS lookup failed: ' + e.message)
+    }
+    setDnsTesting(false)
+  }
+
   const saveMailSmtp = async (e) => {
     e.preventDefault()
     setSmtpSaving(true)
@@ -542,6 +576,7 @@ export default function SiteDetailPage() {
     loadBuildSettings()
     loadGit()
     loadMail()
+    loadDnsInfo()
     loadScripts()
   }, [id])
 
@@ -819,8 +854,27 @@ export default function SiteDetailPage() {
         
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'overview' && (
-          <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:20 }}>
-            {/* Specs & Configuration card */}
+          <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
+            {site.warning && (
+              <div className="glass-card" style={{ 
+                padding: '16px 20px', 
+                border: '1px solid rgba(245, 158, 11, 0.3)', 
+                background: 'rgba(245, 158, 11, 0.08)', 
+                color: 'var(--color-warning)', 
+                borderRadius: 12, 
+                display: 'flex', 
+                alignItems: 'flex-start', 
+                gap: 12 
+              }}>
+                <AlertTriangle size={20} style={{ flexShrink: 0, marginTop: 2 }} />
+                <div>
+                  <h4 style={{ margin: '0 0 4px 0', fontSize: '0.95rem', fontWeight: 800 }}>Site Warning / Port Check Alert</h4>
+                  <p style={{ margin: 0, fontSize: '0.85rem', lineHeight: 1.5 }}>{site.warning}</p>
+                </div>
+              </div>
+            )}
+            <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:20 }}>
+              {/* Specs & Configuration card */}
             <div style={{ display:'flex', flexDirection:'column', gap:20 }}>
               <div className="glass-card" style={{ padding:24, display:'flex', flexDirection:'column', gap:18 }}>
                 <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800, borderBottom:'1px solid var(--color-border)', paddingBottom:12, display:'flex', alignItems:'center', gap:8 }}>
@@ -1121,7 +1175,8 @@ export default function SiteDetailPage() {
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
         {/* TAB 2: DEPLOYMENTS & LOGS */}
         {activeTab === 'deployments' && (
@@ -1816,6 +1871,108 @@ export default function SiteDetailPage() {
                       <span style={{ fontSize: '0.72rem', padding: '2px 8px', background: 'rgba(16,185,129,0.08)', color: 'var(--color-success)', borderRadius: 4, fontWeight: 700 }}>SYSTEM UNIX USER</span>
                     </div>
                   </div>
+                </div>
+
+                {/* Domain DNS Records Authentication Suite Card */}
+                <div className="glass-card animate-fade-in" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <ShieldCheck size={16} color="var(--color-success)" />
+                      Domain DNS Authentication Suite
+                    </h3>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.76rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                      Ensure high email deliverability and avoid spam folders by configuring these mandatory TXT records in your domain registrar (e.g., Cloudflare, GoDaddy).
+                    </p>
+                  </div>
+
+                  {dnsLoading ? (
+                    <div style={{ padding: 20, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                      <RefreshCw size={16} className="animate-spin" style={{ margin: '0 auto 8px auto', opacity: 0.4 }} />
+                      Loading DNS records info...
+                    </div>
+                  ) : dnsInfo ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {/* SPF */}
+                      <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>1. SPF Record (TXT)</span>
+                          {dnsTestResults?.spf ? (
+                            dnsTestResults.spf.valid ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><Check size={12} /> Live Verified</span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><X size={12} /> Mismatched / Missing</span>
+                            )
+                          ) : null}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Host/Name: <code style={{ fontFamily: 'var(--font-mono)' }}>@</code></div>
+                            <input className="input" style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', height: 32 }} readOnly value={dnsInfo.spf} />
+                          </div>
+                          <button className="btn btn-secondary btn-sm" style={{ height: 32, marginTop: 14 }} onClick={() => { navigator.clipboard.writeText(dnsInfo.spf); alert('Copied SPF Record!') }}><Copy size={12} /></button>
+                        </div>
+                      </div>
+
+                      {/* DKIM */}
+                      <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>2. DKIM Record (TXT)</span>
+                          {dnsTestResults?.dkim ? (
+                            dnsTestResults.dkim.valid ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><Check size={12} /> Live Verified</span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><X size={12} /> Mismatched / Missing</span>
+                            )
+                          ) : null}
+                        </div>
+                        {dnsInfo.dkim ? (
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Host/Name: <code style={{ fontFamily: 'var(--font-mono)' }}>default._domainkey</code></div>
+                              <input className="input" style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', height: 32 }} readOnly value={dnsInfo.dkim} />
+                            </div>
+                            <button className="btn btn-secondary btn-sm" style={{ height: 32, marginTop: 14 }} onClick={() => { navigator.clipboard.writeText(dnsInfo.dkim); alert('Copied DKIM Record!') }}><Copy size={12} /></button>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', padding: '6px 10px', background: 'rgba(255,255,255,0.02)', border: '1px dashed var(--color-border)', borderRadius: 6 }}>
+                            ⚠️ OpenDKIM is not configured on your VPS mail server yet. Click install inside VPS SMTP Settings to auto-generate keys.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* DMARC */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                          <span style={{ fontSize: '0.82rem', fontWeight: 700 }}>3. DMARC Record (TXT)</span>
+                          {dnsTestResults?.dmarc ? (
+                            dnsTestResults.dmarc.valid ? (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-success)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><Check size={12} /> Live Verified</span>
+                            ) : (
+                              <span style={{ fontSize: '0.7rem', color: 'var(--color-danger)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}><X size={12} /> Mismatched / Missing</span>
+                            )
+                          ) : null}
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginBottom: 2 }}>Host/Name: <code style={{ fontFamily: 'var(--font-mono)' }}>_dmarc</code></div>
+                            <input className="input" style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', height: 32 }} readOnly value={dnsInfo.dmarc} />
+                          </div>
+                          <button className="btn btn-secondary btn-sm" style={{ height: 32, marginTop: 14 }} onClick={() => { navigator.clipboard.writeText(dnsInfo.dmarc); alert('Copied DMARC Record!') }}><Copy size={12} /></button>
+                        </div>
+                      </div>
+
+                      {/* Test DNS Button */}
+                      <button 
+                        className="btn btn-secondary" 
+                        onClick={testDnsRecords} 
+                        disabled={dnsTesting}
+                        style={{ height: 38, width: '100%', fontSize: '0.8rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 8 }}
+                      >
+                        {dnsTesting ? <RefreshCw size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+                        {dnsTesting ? 'Verifying Live Propagation...' : '⚡ Test Live DNS Propagation'}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
