@@ -258,4 +258,118 @@ router.post('/install-postfix', async (req, res) => {
   res.end()
 })
 
+// GET /api/smtp/accounts - List VPS mailboxes
+router.get('/accounts', async (req, res) => {
+  try {
+    // Find all users under /home that have a Maildir
+    const { stdout } = await execAsync('find /home -maxdepth 2 -name "Maildir" -type d 2>/dev/null')
+    const accounts = []
+    
+    const paths = stdout.split('\n').filter(Boolean)
+    for (const p of paths) {
+      const parts = p.split('/')
+      const username = parts[2] // /home/username/Maildir
+      if (username) {
+        // Get user details
+        try {
+          const { stdout: pwdOut } = await execAsync(`getent passwd ${username}`)
+          const pwdParts = pwdOut.trim().split(':')
+          accounts.push({
+            username,
+            uid: pwdParts[2],
+            home: pwdParts[5],
+            shell: pwdParts[6]
+          })
+        } catch {}
+      }
+    }
+    
+    // Get destinations from Postfix mydestination
+    let domains = []
+    try {
+      const fs = require('fs')
+      if (fs.existsSync('/etc/postfix/main.cf')) {
+        const conf = fs.readFileSync('/etc/postfix/main.cf', 'utf8')
+        const match = conf.match(/^mydestination\s*=\s*(.+)$/m)
+        if (match) {
+          domains = match[1].split(',').map(d => d.trim()).filter(Boolean)
+        }
+      }
+    } catch {}
+
+    res.json({ accounts, domains })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/smtp/accounts/create - Create system user and maildir
+router.post('/accounts/create', async (req, res) => {
+  const { username, password, domain } = req.body
+  if (!username || !password) {
+    return res.status(400).json({ error: 'username and password required' })
+  }
+
+  const cleanUser = username.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  if (cleanUser.length < 2) {
+    return res.status(400).json({ error: 'invalid username' })
+  }
+
+  try {
+    // 1. Check if user already exists
+    let userExists = false
+    try {
+      await execAsync(`id ${cleanUser}`)
+      userExists = true
+    } catch {}
+
+    // 2. Create user if not exists
+    if (!userExists) {
+      logger.info(`Creating system user: ${cleanUser}`)
+      await execAsync(`useradd -m -s /bin/bash ${cleanUser}`)
+    }
+
+    // 3. Set password
+    logger.info(`Setting password for system user: ${cleanUser}`)
+    await execAsync(`echo "${cleanUser}:${password}" | chpasswd`)
+
+    // 4. Set up Maildir structure
+    logger.info(`Setting up Maildir for user: ${cleanUser}`)
+    const homeDir = `/home/${cleanUser}`
+    await execAsync(`mkdir -p ${homeDir}/Maildir/{cur,new,tmp}`)
+    await execAsync(`chown -R ${cleanUser}:${cleanUser} ${homeDir}/Maildir`)
+    await execAsync(`chmod -R 700 ${homeDir}/Maildir`)
+
+    // 5. Add domain to Postfix mydestination if provided
+    if (domain && domain.trim()) {
+      const cleanDomain = domain.trim().toLowerCase().replace(/[^a-z0-9\.-]/g, '')
+      const fs = require('fs')
+      const mainCfPath = '/etc/postfix/main.cf'
+      
+      if (fs.existsSync(mainCfPath)) {
+        let conf = fs.readFileSync(mainCfPath, 'utf8')
+        const match = conf.match(/^mydestination\s*=\s*(.+)$/m)
+        if (match) {
+          const currentDest = match[1]
+          if (!currentDest.includes(cleanDomain)) {
+            logger.info(`Adding domain ${cleanDomain} to Postfix mydestination`)
+            const newDest = `${currentDest.trim()}, ${cleanDomain}, mail.${cleanDomain}`
+            conf = conf.replace(/^mydestination\s*=.+$/m, `mydestination = ${newDest}`)
+            fs.writeFileSync(mainCfPath, conf)
+            
+            // Reload Postfix & Dovecot
+            await execAsync('systemctl reload postfix')
+            await execAsync('systemctl reload dovecot')
+          }
+        }
+      }
+    }
+
+    res.json({ success: true, username: cleanUser, message: 'Mailbox account successfully configured' })
+  } catch (err) {
+    logger.error('Failed to create mail account', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
 module.exports = router
