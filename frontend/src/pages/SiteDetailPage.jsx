@@ -8,7 +8,7 @@ import {
   Terminal, FileCode, RotateCcw, Save, Trash2, ExternalLink, 
   AlertTriangle, Wrench, Shield, Check, X, RefreshCw, Eye, EyeOff,
   GitBranch, GitCommit, GitPullRequest, Code, Settings, Plus, Key, Copy, HelpCircle,
-  Cpu, HardDrive, Lock, Database, Mail, Send, Play, Boxes, Upload
+  Cpu, HardDrive, Lock, Database, Mail, Send, Play, Boxes, Upload, Server
 } from 'lucide-react'
 import FilesPage from './FilesPage'
 
