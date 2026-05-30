@@ -1696,8 +1696,8 @@ export default function SiteDetailPage() {
                       <label className="label">SMTP Host</label>
                       <input
                         className="input"
-                        value={mailSettings.smtp?.host || ''}
-                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, host: e.target.value } }))}
+                        value={mailSettings?.smtp?.host || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...(prev?.smtp || {}), host: e.target.value } }))}
                         placeholder="smtp.gmail.com"
                       />
                     </div>
@@ -1707,8 +1707,8 @@ export default function SiteDetailPage() {
                         <input
                           className="input"
                           type="number"
-                          value={mailSettings.smtp?.port || ''}
-                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, port: e.target.value } }))}
+                          value={mailSettings?.smtp?.port || ''}
+                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...(prev?.smtp || {}), port: e.target.value } }))}
                           placeholder="587"
                         />
                       </div>
@@ -1716,8 +1716,8 @@ export default function SiteDetailPage() {
                         <label className="label">Encryption</label>
                         <select
                           className="input"
-                          value={mailSettings.smtp?.encryption || 'TLS'}
-                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, encryption: e.target.value } }))}
+                          value={mailSettings?.smtp?.encryption || 'TLS'}
+                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...(prev?.smtp || {}), encryption: e.target.value } }))}
                         >
                           <option>TLS</option>
                           <option>SSL</option>
@@ -1729,8 +1729,8 @@ export default function SiteDetailPage() {
                       <label className="label">Username</label>
                       <input
                         className="input"
-                        value={mailSettings.smtp?.username || ''}
-                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, username: e.target.value } }))}
+                        value={mailSettings?.smtp?.username || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...(prev?.smtp || {}), username: e.target.value } }))}
                         placeholder="e.g. info@domain.com"
                       />
                     </div>
@@ -1739,8 +1739,8 @@ export default function SiteDetailPage() {
                       <input
                         className="input"
                         type="password"
-                        value={mailSettings.smtp?.password || ''}
-                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, password: e.target.value } }))}
+                        value={mailSettings?.smtp?.password || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...(prev?.smtp || {}), password: e.target.value } }))}
                         placeholder="••••••••"
                       />
                     </div>
@@ -1786,11 +1786,11 @@ export default function SiteDetailPage() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Incoming IMAP Server</span>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings.domain || site.domain}</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings?.domain || site?.domain}</span>
                     </div>
                     <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Outgoing SMTP Server</span>
-                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings.domain || site.domain}</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings?.domain || site?.domain}</span>
                     </div>
                     <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Secure SSL Ports</span>
@@ -1818,7 +1818,7 @@ export default function SiteDetailPage() {
                     Provision Domain Mailbox
                   </h3>
                   <p style={{ margin: '0 0 18px 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                    Create dynamic local virtual mailboxes mapped to the domain <strong>{mailSettings.domain || site.domain}</strong>.
+                    Create dynamic local virtual mailboxes mapped to the domain <strong>{mailSettings?.domain || site?.domain}</strong>.
                   </p>
 
                   <form onSubmit={createMailbox} style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
@@ -1833,7 +1833,7 @@ export default function SiteDetailPage() {
                           placeholder="e.g. info"
                           required
                         />
-                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings.domain || site.domain}</span>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings?.domain || site?.domain}</span>
                       </div>
                     </div>
 
@@ -1877,7 +1877,7 @@ export default function SiteDetailPage() {
                           placeholder="e.g. contact"
                           required
                         />
-                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings.domain || site.domain}</span>
+                        <span style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-text-muted)' }}>@{mailSettings?.domain || site?.domain}</span>
                       </div>
                     </div>
 
@@ -1910,7 +1910,7 @@ export default function SiteDetailPage() {
                       <RefreshCw size={18} className="animate-spin" style={{ margin: '0 auto 8px auto', opacity: 0.4 }} />
                       Loading configured email records...
                     </div>
-                  ) : (!mailSettings.mailboxes || mailSettings.mailboxes.length === 0) && (!mailSettings.forwarders || mailSettings.forwarders.length === 0) ? (
+                  ) : (!mailSettings?.mailboxes || mailSettings?.mailboxes?.length === 0) && (!mailSettings?.forwarders || mailSettings?.forwarders?.length === 0) ? (
                     <div style={{ padding: 40, textAlign: 'center', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
                       No virtual mailboxes or aliases configured for this domain yet.
                     </div>
@@ -1929,7 +1929,7 @@ export default function SiteDetailPage() {
                         {mailSettings.mailboxes?.map((m) => (
                           <tr key={m.username} style={{ borderBottom: '1px solid var(--color-border)' }}>
                             <td style={{ padding: '12px 16px', fontSize: '0.82rem', fontWeight: 700 }}>
-                              {m.username}@{mailSettings.domain || site.domain}
+                              {m.username}@{mailSettings?.domain || site?.domain}
                             </td>
                             <td style={{ padding: '12px 16px' }}>
                               <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>Local Mailbox</span>
@@ -1954,7 +1954,7 @@ export default function SiteDetailPage() {
                         {mailSettings.forwarders?.map((f) => (
                           <tr key={f.source} style={{ borderBottom: '1px solid var(--color-border)' }}>
                             <td style={{ padding: '12px 16px', fontSize: '0.82rem', fontWeight: 700 }}>
-                              {f.source}@{mailSettings.domain || site.domain}
+                              {f.source}@{mailSettings?.domain || site?.domain}
                             </td>
                             <td style={{ padding: '12px 16px' }}>
                               <span className="badge badge-blue" style={{ fontSize: '0.65rem' }}>Email Forwarder</span>
