@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, CheckCircle, Shield } from 'lucide-react'
 import api from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
@@ -12,6 +12,57 @@ export default function SettingsPage() {
   const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || 'http://localhost:4001')
   const [saved, setSaved] = useState('')
   const [showKey, setShowKey] = useState(false)
+
+  // Swap space states
+  const [swapInfo, setSwapInfo] = useState({ active: false, totalSwapBytes: 0, usedSwapBytes: 0, swapFileExists: false, swapFileSizeBytes: 0 })
+  const [swapSizeInput, setSwapSizeInput] = useState(5)
+  const [swapLoading, setSwapLoading] = useState(false)
+  const [swapActionBusy, setSwapActionBusy] = useState(false)
+  const [swapMsg, setSwapMsg] = useState('')
+
+  const fetchSwap = async () => {
+    setSwapLoading(true)
+    try {
+      const r = await api.get('/api/system/swap')
+      setSwapInfo(r.data)
+      if (r.data.swapFileSizeBytes > 0) {
+        setSwapSizeInput(Math.round(r.data.swapFileSizeBytes / (1024 * 1024 * 1024)))
+      }
+    } catch (e) {}
+    setSwapLoading(false)
+  }
+
+  useEffect(() => {
+    fetchSwap()
+  }, [])
+
+  const configureSwap = async () => {
+    setSwapActionBusy(true)
+    setSwapMsg('')
+    try {
+      const { data } = await api.post('/api/system/swap', { sizeGB: swapSizeInput })
+      setSwapMsg(`✓ ${data.message}`)
+      await fetchSwap()
+    } catch (err) {
+      setSwapMsg(`✗ Error: ${err.response?.data?.error || err.message}`)
+    }
+    setSwapActionBusy(false)
+  }
+
+  const disableSwap = async () => {
+    if (!window.confirm('Are you sure you want to completely disable and delete the swap file? This may cause the VPS to run out of memory under peak load.')) return
+    setSwapActionBusy(true)
+    setSwapMsg('')
+    try {
+      const { data } = await api.post('/api/system/swap', { sizeGB: 0 })
+      setSwapMsg(`✓ ${data.message}`)
+      setSwapSizeInput(5)
+      await fetchSwap()
+    } catch (err) {
+      setSwapMsg(`✗ Error: ${err.response?.data?.error || err.message}`)
+    }
+    setSwapActionBusy(false)
+  }
 
   // Local state for branding preview
   const [brandForm, setBrandForm] = useState({
@@ -158,6 +209,102 @@ export default function SettingsPage() {
               </div>
             </div>
           </SectionCard>
+
+          {/* VPS Virtual Memory Swap Space */}
+          <div className="glass-card animate-fade-in" style={{ padding: 26, display:'flex', flexDirection:'column', gap:18 }}>
+            <div style={{ display: 'flex', justifyContent:'space-between', alignItems: 'flex-start', borderBottom:'1px solid var(--color-border)', paddingBottom:12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink:0 }}>
+                  <Sliders size={16} color="var(--color-primary)" style={{ margin:'auto' }} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800 }}>VPS NVMe Virtual Memory Swap Space</h3>
+                  <p style={{ margin: '2px 0 0 0', fontSize:'0.76rem', color:'var(--color-text-muted)' }}>
+                    Allocate secondary virtual RAM from high-speed NVMe to prevent memory exhaustion and OOM crashes.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 16 }}>
+              <div style={{ padding: 14, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Current Swap Status</div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 800, color: swapInfo.active ? 'var(--color-success)' : 'var(--color-text-muted)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: '50%', background: swapInfo.active ? 'var(--color-success)' : 'var(--color-text-muted)' }}></span>
+                  {swapInfo.active ? 'ACTIVE & ONLINE' : 'INACTIVE'}
+                </div>
+              </div>
+              <div style={{ padding: 14, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Total Swap Allocated</div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--color-text)', marginTop: 4 }}>
+                  {swapInfo.totalSwapBytes > 0 ? `${(swapInfo.totalSwapBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : 'None'}
+                </div>
+              </div>
+              <div style={{ padding: 14, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Used Swap (NVMe Cache)</div>
+                <div style={{ fontSize: '0.9rem', fontWeight: 800, color: 'var(--color-text)', marginTop: 4 }}>
+                  {swapInfo.usedSwapBytes > 0 ? `${(swapInfo.usedSwapBytes / (1024 * 1024 * 1024)).toFixed(2)} GB` : '0 GB'}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label className="label">Configure Swap File Size (GB)</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="16" 
+                    value={swapSizeInput} 
+                    onChange={e => setSwapSizeInput(parseInt(e.target.value))} 
+                    style={{ flex: 1, accentColor: 'var(--color-primary)' }}
+                  />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 800, fontFamily: 'var(--font-mono)', minWidth: 50, textAlign: 'right' }}>
+                    {swapSizeInput} GB
+                  </span>
+                </div>
+                <p style={{ margin: '4px 0 0 0', fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>
+                  Recommended sizes: 2GB to 8GB depending on your SSD/NVMe drive size.
+                </p>
+              </div>
+
+              {swapMsg && (
+                <div style={{ 
+                  fontSize: '0.8rem', 
+                  color: swapMsg.startsWith('✓') ? 'var(--color-success)' : 'var(--color-danger)', 
+                  fontWeight: 600,
+                  padding: '10px 14px',
+                  background: 'rgba(255,255,255,0.02)',
+                  borderRadius: 8,
+                  border: '1px solid var(--color-border)'
+                }}>
+                  {swapMsg}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={configureSwap} 
+                  disabled={swapActionBusy || swapLoading}
+                  style={{ flex: 1, height: 38, fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                >
+                  {swapActionBusy ? 'Configuring Swap...' : '⚡ Apply & Configure Swap'}
+                </button>
+                {swapInfo.active && (
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={disableSwap} 
+                    disabled={swapActionBusy || swapLoading}
+                    style={{ height: 38, padding: '0 16px', fontSize: '0.8rem', color: 'var(--color-danger)', borderColor: 'rgba(239,68,68,0.2)' }}
+                  >
+                    Disable Swap
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Right column settings cards */}

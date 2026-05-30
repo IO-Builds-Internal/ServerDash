@@ -197,6 +197,123 @@ app.post('/api/settings/:section', (req, res) => {
   res.json({ success: true })
 })
 
+// ── GET /api/system/swap ────────────────────────────────────────────────────────
+app.get('/api/system/swap', async (req, res) => {
+  const { exec } = require('child_process')
+  const { promisify } = require('util')
+  const execAsync = promisify(exec)
+  
+  try {
+    // 1. Get swap size using free command
+    const { stdout: freeOut } = await execAsync('free -b')
+    const lines = freeOut.split('\n')
+    let totalSwap = 0
+    let usedSwap = 0
+    
+    for (const line of lines) {
+      if (line.toLowerCase().startsWith('swap:')) {
+        const parts = line.split(/\s+/).filter(Boolean)
+        totalSwap = parseInt(parts[1]) || 0
+        usedSwap = parseInt(parts[2]) || 0
+        break
+      }
+    }
+    
+    // 2. Check if /swapfile exists on disk and its size
+    let swapFileExists = false
+    let swapFileSize = 0
+    try {
+      const fs = require('fs')
+      if (fs.existsSync('/swapfile')) {
+        swapFileExists = true
+        const stats = fs.statSync('/swapfile')
+        swapFileSize = stats.size
+      }
+    } catch {}
+
+    res.json({
+      active: totalSwap > 0,
+      totalSwapBytes: totalSwap,
+      usedSwapBytes: usedSwap,
+      swapFileExists,
+      swapFileSizeBytes: swapFileSize
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/system/swap ───────────────────────────────────────────────────────
+app.post('/api/system/swap', async (req, res) => {
+  const { exec } = require('child_process')
+  const { promisify } = require('util')
+  const execAsync = promisify(exec)
+  const fs = require('fs')
+  
+  const { sizeGB } = req.body
+  if (sizeGB === undefined || typeof sizeGB !== 'number' || sizeGB < 0 || sizeGB > 32) {
+    return res.status(400).json({ error: 'sizeGB must be a number between 0 and 32' })
+  }
+
+  try {
+    logger.info(`Swap file reconfiguration requested: ${sizeGB} GB`)
+
+    // 1. Turn off active swap file first
+    try {
+      await execAsync('swapoff /swapfile 2>/dev/null || swapoff -a 2>/dev/null')
+    } catch (e) {
+      logger.warn('Error turning off swap, might not be active', { error: e.message })
+    }
+
+    if (sizeGB > 0) {
+      // 2. Allocate space (try fallocate first, fall back to dd for compatibility)
+      try {
+        await execAsync(`fallocate -l ${sizeGB}G /swapfile`)
+      } catch (err) {
+        logger.info('fallocate failed, falling back to dd...')
+        await execAsync(`dd if=/dev/zero of=/swapfile bs=1M count=${sizeGB * 1024}`)
+      }
+
+      // 3. Set correct permissions
+      await execAsync('chmod 600 /swapfile')
+
+      // 4. Format swapfile
+      await execAsync('mkswap /swapfile')
+
+      // 5. Activate swapfile
+      await execAsync('swapon /swapfile')
+
+      // 6. Ensure persistent entry is in /etc/fstab
+      if (fs.existsSync('/etc/fstab')) {
+        let fstab = fs.readFileSync('/etc/fstab', 'utf8')
+        if (!fstab.includes('/swapfile')) {
+          fstab += '\n/swapfile none swap sw 0 0\n'
+          fs.writeFileSync('/etc/fstab', fstab)
+        }
+      }
+      logger.info(`Successfully created and enabled ${sizeGB} GB swap file`)
+      res.json({ success: true, message: `Successfully created and enabled ${sizeGB} GB swap file.` })
+    } else {
+      // 7. Disable and delete swapfile
+      if (fs.existsSync('/swapfile')) {
+        fs.unlinkSync('/swapfile')
+      }
+      
+      // Remove persistent entry from fstab
+      if (fs.existsSync('/etc/fstab')) {
+        let fstab = fs.readFileSync('/etc/fstab', 'utf8')
+        fstab = fstab.split('\n').filter(line => !line.includes('/swapfile')).join('\n')
+        fs.writeFileSync('/etc/fstab', fstab)
+      }
+      logger.info('Successfully disabled and deleted swap file')
+      res.json({ success: true, message: 'Successfully disabled and deleted swap file.' })
+    }
+  } catch (err) {
+    logger.error('Failed to configure swap file', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ─── Error Handler ─────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', { error: err.message, stack: err.stack })

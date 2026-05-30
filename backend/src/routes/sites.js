@@ -1637,69 +1637,68 @@ if __name__ == '__main__':
 
 async function syncPostfixMail(domain, mailboxes = [], forwarders = []) {
   try {
-    // 1. Sync vmailbox
-    const vmailboxPath = '/etc/postfix/vmailbox'
-    let vmailboxContent = ''
-    if (fs.existsSync(vmailboxPath)) {
-      vmailboxContent = fs.readFileSync(vmailboxPath, 'utf8')
-    }
-    // Filter out existing domain lines
-    let vmailLines = vmailboxContent.split('\n').filter(line => {
-      const trim = line.trim()
-      if (!trim || trim.startsWith('#')) return true
-      return !trim.includes(`@${domain}`)
-    })
-    // Append current mailboxes
-    mailboxes.forEach(m => {
-      vmailLines.push(`${m.username}@${domain}   ${domain}/${m.username}/`)
-    })
-    fs.writeFileSync(vmailboxPath, vmailLines.join('\n') + '\n', 'utf8')
-
-    // 2. Sync virtual (forwarders)
+    const fs = require('fs')
     const virtualPath = '/etc/postfix/virtual'
-    let virtualContent = ''
+    const mainCfPath = '/etc/postfix/main.cf'
+
+    // 1. Read current virtual alias mappings
+    let virtualLines = []
     if (fs.existsSync(virtualPath)) {
-      virtualContent = fs.readFileSync(virtualPath, 'utf8')
+      const virtualContent = fs.readFileSync(virtualPath, 'utf8')
+      // Filter out existing lines for this domain
+      virtualLines = virtualContent.split('\n').filter(line => {
+        const trim = line.trim()
+        if (!trim || trim.startsWith('#')) return true
+        return !trim.includes(`@${domain}`)
+      })
     }
-    // Filter out existing domain lines
-    let virtualLines = virtualContent.split('\n').filter(line => {
-      const trim = line.trim()
-      if (!trim || trim.startsWith('#')) return true
-      return !trim.includes(`@${domain}`)
+
+    // 2. Append current mailboxes mapped to system usernames
+    mailboxes.forEach(m => {
+      if (m.systemUsername) {
+        virtualLines.push(`${m.username}@${domain}   ${m.systemUsername}`)
+      }
     })
-    // Append current forwarders
+
+    // 3. Append current forwarders
     forwarders.forEach(f => {
       virtualLines.push(`${f.source}@${domain}   ${f.target}`)
     })
-    fs.writeFileSync(virtualPath, virtualLines.join('\n') + '\n', 'utf8')
 
-    // Ensure virtual_mailbox_domains is configured in main.cf
-    try {
-      let mainCf = fs.readFileSync('/etc/postfix/main.cf', 'utf8')
+    // Write back /etc/postfix/virtual
+    fs.writeFileSync(virtualPath, virtualLines.join('\n').trim() + '\n', 'utf8')
+
+    // 4. Ensure virtual_alias_maps is in main.cf
+    if (fs.existsSync(mainCfPath)) {
+      let mainCf = fs.readFileSync(mainCfPath, 'utf8')
       let changed = false
-      if (!mainCf.includes('virtual_mailbox_domains')) {
-        mainCf += `\nvirtual_mailbox_domains = hash:/etc/postfix/vmail_domains\nvirtual_mailbox_base = /var/mail/vhosts\nvirtual_mailbox_maps = hash:/etc/postfix/vmailbox\nvirtual_minimum_uid = 100\nvirtual_uid_maps = static:5000\nvirtual_gid_maps = static:5000\n`
-        changed = true
-      }
       if (!mainCf.includes('virtual_alias_maps')) {
         mainCf += `\nvirtual_alias_maps = hash:/etc/postfix/virtual\n`
         changed = true
       }
-      if (changed) {
-        fs.writeFileSync('/etc/postfix/main.cf', mainCf, 'utf8')
-      }
       
-      // Ensure vmail_domains list contains the domain
-      const domainsPath = '/etc/postfix/vmail_domains'
-      let domsContent = fs.existsSync(domainsPath) ? fs.readFileSync(domainsPath, 'utf8') : ''
-      if (!domsContent.includes(domain)) {
-        domsContent += `${domain} OK\n`
-        fs.writeFileSync(domainsPath, domsContent, 'utf8')
+      // Ensure domain is in mydestination so local delivery to system users is enabled
+      const match = mainCf.match(/^mydestination\s*=\s*(.+)$/m)
+      if (match) {
+        const currentDest = match[1]
+        if (!currentDest.includes(domain)) {
+          logger.info(`Adding domain ${domain} to Postfix mydestination`)
+          const newDest = `${currentDest.trim()}, ${domain}, mail.${domain}`
+          mainCf = mainCf.replace(/^mydestination\s*=.+$/m, `mydestination = ${newDest}`)
+          changed = true
+        }
       }
-    } catch {}
 
-    // Postmap and system reload
-    await execAsync('postmap /etc/postfix/vmailbox && postmap /etc/postfix/virtual && postmap /etc/postfix/vmail_domains && systemctl reload postfix').catch(() => {})
+      if (changed) {
+        fs.writeFileSync(mainCfPath, mainCf, 'utf8')
+      }
+    }
+
+    // 5. Compile virtual maps and reload services
+    await execAsync('postmap /etc/postfix/virtual')
+    await execAsync('systemctl reload postfix')
+    await execAsync('systemctl reload dovecot')
+    logger.info(`Mail configuration synced for domain ${domain}`)
   } catch (err) {
     logger.error('Error syncing Postfix mail configs', { error: err.message })
   }
@@ -1719,6 +1718,14 @@ function resolveSiteRoot(id) {
       if (!site.root) {
         site.root = `/var/www/${site.domain}`
       }
+      
+      // Strip trailing slashes and normalize to git/project root if it points to a sub-folder like /dist
+      let rootPath = site.root.replace(/\/+$/, '')
+      const projectRoot = rootPath.replace(/\/(dist|public|html|build)$/i, '')
+      if (fs.existsSync(projectRoot)) {
+        site.root = projectRoot
+      }
+
       if (!fs.existsSync(site.root)) {
         try { fs.mkdirSync(site.root, { recursive: true }) } catch (e) {}
       }
@@ -1727,7 +1734,13 @@ function resolveSiteRoot(id) {
   }
   if (id.startsWith('www-')) {
     const domain = id.slice(4)
-    const root = `/var/www/${domain}`
+    let root = `/var/www/${domain}`
+    // Normalize www- templates too
+    root = root.replace(/\/+$/, '')
+    const projectRoot = root.replace(/\/(dist|public|html|build)$/i, '')
+    if (fs.existsSync(projectRoot)) {
+      root = projectRoot
+    }
     if (!fs.existsSync(root)) {
       try { fs.mkdirSync(root, { recursive: true }) } catch (e) {}
     }
@@ -1784,6 +1797,15 @@ router.post('/:id/mail/mailbox', async (req, res) => {
     return res.status(400).json({ error: 'Username and password are required.' })
   }
 
+  const cleanDomain = site.domain.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const cleanUser = username.toLowerCase().replace(/[^a-z0-9_-]/g, '')
+  
+  // Generate safe system username (max 32 chars)
+  let systemUsername = `${cleanDomain.slice(0, 15)}_${cleanUser.slice(0, 15)}`
+  if (systemUsername.length > 32) {
+    systemUsername = systemUsername.slice(0, 32)
+  }
+
   const metaPath = path.join(site.root, '.serverdash.json')
   let meta = {}
   if (fs.existsSync(metaPath)) {
@@ -1797,12 +1819,51 @@ router.post('/:id/mail/mailbox', async (req, res) => {
     return res.status(400).json({ error: 'Mailbox account username already exists.' })
   }
 
-  meta.mail.mailboxes.push({ username, password, createdAt: new Date().toISOString() })
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+  try {
+    // 1. Check if system user already exists
+    let userExists = false
+    try {
+      await execAsync(`id ${systemUsername}`)
+      userExists = true
+    } catch {}
 
-  await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+    // 2. Create system user if not exists
+    if (!userExists) {
+      logger.info(`Creating system user: ${systemUsername}`)
+      await execAsync(`useradd -m -s /bin/bash ${systemUsername}`)
+    }
 
-  res.json({ success: true, message: `Virtual mailbox '${username}@${site.domain}' successfully created.` })
+    // 3. Set password
+    logger.info(`Setting password for system user: ${systemUsername}`)
+    await execAsync(`echo "${systemUsername}:${password}" | chpasswd`)
+
+    // 4. Set up Maildir structure
+    logger.info(`Setting up Maildir for user: ${systemUsername}`)
+    const homeDir = `/home/${systemUsername}`
+    await execAsync(`mkdir -p ${homeDir}/Maildir/{cur,new,tmp}`)
+    await execAsync(`chown -R ${systemUsername}:${systemUsername} ${homeDir}/Maildir`)
+    await execAsync(`chmod -R 700 ${homeDir}/Maildir`)
+
+    // 5. Store metadata
+    meta.mail.mailboxes.push({ 
+      username, 
+      systemUsername, 
+      createdAt: new Date().toISOString() 
+    })
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+    // 6. Sync Postfix configuration
+    await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+
+    res.json({ 
+      success: true, 
+      message: `Virtual mailbox '${username}@${site.domain}' successfully created and mapped to system user '${systemUsername}'.`,
+      systemUsername
+    })
+  } catch (err) {
+    logger.error('Failed to create local site mailbox', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── DELETE /api/sites/:id/mail/mailbox/:username ────────────────────────────────
@@ -1819,12 +1880,30 @@ router.delete('/:id/mail/mailbox/:username', async (req, res) => {
 
   if (!meta.mail || !meta.mail.mailboxes) return res.status(400).json({ error: 'No mailboxes found' })
 
-  meta.mail.mailboxes = meta.mail.mailboxes.filter(m => m.username.toLowerCase() !== username.toLowerCase())
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+  const mailbox = meta.mail.mailboxes.find(m => m.username.toLowerCase() === username.toLowerCase())
+  if (!mailbox) return res.status(404).json({ error: 'Mailbox not found' })
 
-  await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+  try {
+    // 1. Delete local system user and their home/Maildir directory
+    if (mailbox.systemUsername) {
+      logger.info(`Deleting system user: ${mailbox.systemUsername}`)
+      await execAsync(`userdel -r ${mailbox.systemUsername}`).catch(e => {
+        logger.error(`Error deleting system user ${mailbox.systemUsername}:`, e)
+      })
+    }
 
-  res.json({ success: true, message: `Virtual mailbox '${username}' deleted successfully.` })
+    // 2. Filter metadata
+    meta.mail.mailboxes = meta.mail.mailboxes.filter(m => m.username.toLowerCase() !== username.toLowerCase())
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+
+    // 3. Sync Postfix
+    await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
+
+    res.json({ success: true, message: `Virtual mailbox '${username}' deleted successfully.` })
+  } catch (err) {
+    logger.error('Failed to delete site mailbox', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── POST /api/sites/:id/mail/forwarder ─────────────────────────────────────────

@@ -62,6 +62,8 @@ export default function SiteDetailPage() {
   const [smtpSaving, setSmtpSaving] = useState(false)
   const [testRecipient, setTestRecipient] = useState('')
   const [testBusy, setTestBusy] = useState(false)
+  const [postfixStatus, setPostfixStatus] = useState(null)
+  const [postfixActionBusy, setPostfixActionBusy] = useState(null)
 
   // Nginx Config Editor state
   const [configContent, setConfigContent] = useState('')
@@ -375,12 +377,29 @@ export default function SiteDetailPage() {
     }
   }
 
+  const fetchPostfixStatus = async () => {
+    try {
+      const r = await api.get('/api/smtp/postfix')
+      setPostfixStatus(r.data)
+    } catch (e) {}
+  }
+
+  const handlePostfixAction = async (action) => {
+    setPostfixActionBusy(`postfix-${action}`)
+    try {
+      await api.post(`/api/smtp/postfix/${action}`)
+      await fetchPostfixStatus()
+    } catch (e) {}
+    setPostfixActionBusy(null)
+  }
+
   const loadMail = async () => {
     setMailLoading(true)
     setMailError(null)
     try {
       const { data } = await api.get(`/api/sites/${id}/mail`)
       setMailSettings(data)
+      await fetchPostfixStatus()
     } catch (e) {
       setMailError(e.response?.data?.error || e.message)
     } finally {
@@ -1602,96 +1621,189 @@ export default function SiteDetailPage() {
               </div>
             )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 24, alignItems: 'start' }}>
-              
-              {/* Left Side: SMTP Relay settings for this domain */}
-              <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
-                <div>
-                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Mail size={18} color="var(--color-primary)" />
-                    Domain Outbound SMTP Relay
-                  </h3>
-                  <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
-                    Configure dedicated outbound SMTP credentials specifically for this site to dispatch transactional emails safely.
-                  </p>
+            {/* Postfix / Mail Server Status Card */}
+            {postfixStatus && (
+              <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Server size={18} color="var(--color-primary)" />
+                      Postfix + Dovecot VPS Mail Server Status
+                    </h3>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                      Monitor Postfix daemon service status, delivery queue, and active mail logs.
+                    </p>
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button 
+                      className="btn btn-secondary btn-sm" 
+                      onClick={() => handlePostfixAction('restart')}
+                      disabled={postfixActionBusy === 'postfix-restart'}
+                      style={{ height: 32, fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <RefreshCw size={12} className={postfixActionBusy === 'postfix-restart' ? 'animate-spin' : ''} />
+                      {postfixActionBusy === 'postfix-restart' ? 'Restarting...' : 'Restart Postfix'}
+                    </button>
+                    <button 
+                      className="btn btn-secondary btn-sm" 
+                      onClick={() => handlePostfixAction('flush')}
+                      disabled={postfixActionBusy === 'postfix-flush'}
+                      style={{ height: 32, fontSize: '0.78rem', display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      <Send size={12} />
+                      {postfixActionBusy === 'postfix-flush' ? 'Flushing...' : 'Flush Mail Queue'}
+                    </button>
+                  </div>
                 </div>
 
-                <form onSubmit={saveMailSmtp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  <div>
-                    <label className="label">SMTP Host</label>
-                    <input
-                      className="input"
-                      value={mailSettings.smtp?.host || ''}
-                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, host: e.target.value } }))}
-                      placeholder="smtp.gmail.com"
-                    />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16, marginTop: 4 }}>
+                  <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Service Status</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: postfixStatus.status === 'running' ? 'var(--color-success)' : 'var(--color-danger)', marginTop: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: postfixStatus.status === 'running' ? 'var(--color-success)' : 'var(--color-danger)' }}></span>
+                      {postfixStatus.status.toUpperCase()}
+                    </div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ padding: 16, background: 'rgba(255,255,255,0.02)', border: '1px solid var(--color-border)', borderRadius: 8 }}>
+                    <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>Mail Delivery Queue</div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--color-text)', marginTop: 4 }}>
+                      {postfixStatus.queueCount} Pending Messages
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 24, alignItems: 'start' }}>
+              
+              {/* Left Column */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+                {/* SMTP Relay settings */}
+                <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 18 }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Mail size={18} color="var(--color-primary)" />
+                      Domain Outbound SMTP Relay
+                    </h3>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                      Configure dedicated outbound SMTP credentials specifically for this site to dispatch transactional emails safely.
+                    </p>
+                  </div>
+
+                  <form onSubmit={saveMailSmtp} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                     <div>
-                      <label className="label">Port</label>
+                      <label className="label">SMTP Host</label>
                       <input
                         className="input"
-                        type="number"
-                        value={mailSettings.smtp?.port || ''}
-                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, port: e.target.value } }))}
-                        placeholder="587"
+                        value={mailSettings.smtp?.host || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, host: e.target.value } }))}
+                        placeholder="smtp.gmail.com"
+                      />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label className="label">Port</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={mailSettings.smtp?.port || ''}
+                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, port: e.target.value } }))}
+                          placeholder="587"
+                        />
+                      </div>
+                      <div>
+                        <label className="label">Encryption</label>
+                        <select
+                          className="input"
+                          value={mailSettings.smtp?.encryption || 'TLS'}
+                          onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, encryption: e.target.value } }))}
+                        >
+                          <option>TLS</option>
+                          <option>SSL</option>
+                          <option>None</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="label">Username</label>
+                      <input
+                        className="input"
+                        value={mailSettings.smtp?.username || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, username: e.target.value } }))}
+                        placeholder="e.g. info@domain.com"
                       />
                     </div>
                     <div>
-                      <label className="label">Encryption</label>
-                      <select
+                      <label className="label">Password</label>
+                      <input
                         className="input"
-                        value={mailSettings.smtp?.encryption || 'TLS'}
-                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, encryption: e.target.value } }))}
-                      >
-                        <option>TLS</option>
-                        <option>SSL</option>
-                        <option>None</option>
-                      </select>
+                        type="password"
+                        value={mailSettings.smtp?.password || ''}
+                        onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, password: e.target.value } }))}
+                        placeholder="••••••••"
+                      />
+                    </div>
+
+                    <button type="submit" className="btn btn-primary" disabled={smtpSaving} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6 }}>
+                      {smtpSaving ? <RefreshCw size={14} className="animate-spin" /> : smtpSaved ? <Check size={14} /> : <Save size={14} />}
+                      {smtpSaving ? 'Saving Configurations...' : smtpSaved ? 'Saved Successfully' : 'Save SMTP Settings'}
+                    </button>
+                  </form>
+
+                  <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 18, marginTop: 4 }}>
+                    <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.04em' }}>
+                      Quick Connection Test
+                    </h4>
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <input
+                        className="input"
+                        style={{ flex: 1, height: 36, fontSize: '0.8rem' }}
+                        value={testRecipient}
+                        onChange={e => setTestRecipient(e.target.value)}
+                        placeholder="Recipient email address..."
+                      />
+                      <button className="btn btn-secondary" onClick={testDomainMail} disabled={testBusy || !testRecipient} style={{ height: 36, fontSize: '0.8rem', padding: '0 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {testBusy ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
+                        Test
+                      </button>
                     </div>
                   </div>
+                </div>
+
+                {/* Client Connection Settings Card */}
+                <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
                   <div>
-                    <label className="label">Username</label>
-                    <input
-                      className="input"
-                      value={mailSettings.smtp?.username || ''}
-                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, username: e.target.value } }))}
-                      placeholder="e.g. info@domain.com"
-                    />
-                  </div>
-                  <div>
-                    <label className="label">Password</label>
-                    <input
-                      className="input"
-                      type="password"
-                      value={mailSettings.smtp?.password || ''}
-                      onChange={e => setMailSettings(prev => ({ ...prev, smtp: { ...prev.smtp, password: e.target.value } }))}
-                      placeholder="••••••••"
-                    />
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Globe size={16} color="var(--color-primary)" />
+                      Client Connection Configs
+                    </h3>
+                    <p style={{ margin: '4px 0 0 0', fontSize: '0.76rem', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                      Use these connection details to configure secure third-party email clients or website systems:
+                    </p>
                   </div>
 
-                  <button type="submit" className="btn btn-primary" disabled={smtpSaving} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6 }}>
-                    {smtpSaving ? <RefreshCw size={14} className="animate-spin" /> : smtpSaved ? <Check size={14} /> : <Save size={14} />}
-                    {smtpSaving ? 'Saving Configurations...' : smtpSaved ? 'Saved Successfully' : 'Save SMTP Settings'}
-                  </button>
-                </form>
-
-                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 18, marginTop: 4 }}>
-                  <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-text-muted)', letterSpacing: '0.04em' }}>
-                    Quick Connection Test
-                  </h4>
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <input
-                      className="input"
-                      style={{ flex: 1, height: 36, fontSize: '0.8rem' }}
-                      value={testRecipient}
-                      onChange={e => setTestRecipient(e.target.value)}
-                      placeholder="Recipient email address..."
-                    />
-                    <button className="btn btn-secondary" onClick={testDomainMail} disabled={testBusy || !testRecipient} style={{ height: 36, fontSize: '0.8rem', padding: '0 14px', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {testBusy ? <RefreshCw size={12} className="animate-spin" /> : <Send size={12} />}
-                      Test
-                    </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Incoming IMAP Server</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings.domain || site.domain}</span>
+                    </div>
+                    <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Outgoing SMTP Server</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>mail.{mailSettings.domain || site.domain}</span>
+                    </div>
+                    <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Secure SSL Ports</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>IMAP: 993 / SMTP: 465</span>
+                    </div>
+                    <div style={{ borderBottom: '1px solid var(--color-border)', paddingBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Secure STARTTLS Ports</span>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 700, fontFamily: 'var(--font-mono)' }}>IMAP: 143 / SMTP: 587</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Authentication Username</span>
+                      <span style={{ fontSize: '0.72rem', padding: '2px 8px', background: 'rgba(16,185,129,0.08)', color: 'var(--color-success)', borderRadius: 4, fontWeight: 700 }}>SYSTEM UNIX USER</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1808,7 +1920,7 @@ export default function SiteDetailPage() {
                         <tr style={{ background: 'rgba(255,255,255,0.01)', borderBottom: '1px solid var(--color-border)' }}>
                           <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Email Record</th>
                           <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Record Type</th>
-                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Scope Target</th>
+                          <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>System Login Credentials</th>
                           <th style={{ padding: '10px 16px', fontSize: '0.72rem', fontWeight: 800, color: 'var(--color-text-muted)', textTransform: 'uppercase', width: 80, textAlign: 'right' }}>Action</th>
                         </tr>
                       </thead>
@@ -1822,8 +1934,9 @@ export default function SiteDetailPage() {
                             <td style={{ padding: '12px 16px' }}>
                               <span className="badge badge-green" style={{ fontSize: '0.65rem' }}>Local Mailbox</span>
                             </td>
-                            <td style={{ padding: '12px 16px', fontSize: '0.78rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
-                              /var/mail/vhosts/{site.domain}/{m.username}/
+                            <td style={{ padding: '12px 16px', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                              <div>User: <code style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-primary)', fontWeight: 700, padding: '2px 4px', background: 'rgba(255,255,255,0.03)', borderRadius: 4 }}>{m.systemUsername || `${(mailSettings.domain || site.domain).split('.')[0]}_${m.username}`}</code></div>
+                              <div style={{ marginTop: 4, fontSize: '0.7rem', color: 'var(--color-text-muted)', opacity: 0.8 }}>Server: mail.{mailSettings.domain || site.domain}</div>
                             </td>
                             <td style={{ padding: '12px 16px', textAlign: 'right' }}>
                               <button

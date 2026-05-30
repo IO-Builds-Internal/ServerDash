@@ -80,13 +80,25 @@ function calcCpuPct(prev, cur) {
 function parseRam(freeOutput) {
   const lines = freeOutput.split('\n')
   const memLine = lines.find(l => l.startsWith('Mem:'))
-  if (!memLine) return { used: 0, total: 0 }
-  const parts = memLine.trim().split(/\s+/)
-  return {
-    total: parseFloat((parseInt(parts[1]) / 1024).toFixed(2)),
-    used: parseFloat((parseInt(parts[2]) / 1024).toFixed(2)),
-    free: parseFloat((parseInt(parts[3]) / 1024).toFixed(2)),
+  const swapLine = lines.find(l => l.startsWith('Swap:'))
+  
+  const ramRes = { used: 0, total: 0, free: 0, swapTotal: 0, swapUsed: 0, swapFree: 0 }
+  
+  if (memLine) {
+    const parts = memLine.trim().split(/\s+/)
+    ramRes.total = parseFloat((parseInt(parts[1]) / 1024).toFixed(2))
+    ramRes.used = parseFloat((parseInt(parts[2]) / 1024).toFixed(2))
+    ramRes.free = parseFloat((parseInt(parts[3]) / 1024).toFixed(2))
   }
+  
+  if (swapLine) {
+    const parts = swapLine.trim().split(/\s+/)
+    ramRes.swapTotal = parseFloat((parseInt(parts[1]) / 1024).toFixed(2))
+    ramRes.swapUsed = parseFloat((parseInt(parts[2]) / 1024).toFixed(2))
+    ramRes.swapFree = parseFloat((parseInt(parts[3]) / 1024).toFixed(2))
+  }
+  
+  return ramRes
 }
 
 function parseDisk(dfOutput) {

@@ -374,6 +374,29 @@ export default function OverviewPage({ onConnectionChange }) {
             unit="GB"
             color="#10b981"
           />
+          {metrics?.ram?.swapTotal > 0 && (
+            <div style={{ marginTop: 14, borderTop: '1px solid var(--color-border)', paddingTop: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6 }}>
+                <span style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>NVMe Swap Space</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                  {metrics.ram.swapUsed?.toFixed(1)} GB / {metrics.ram.swapTotal?.toFixed(1)} GB
+                </span>
+              </div>
+              <div className="progress-bar" style={{ height: 4, background: 'rgba(255,255,255,0.03)' }}>
+                <div 
+                  className="progress-fill" 
+                  style={{ 
+                    width: `${metrics.ram.swapTotal > 0 ? (metrics.ram.swapUsed / metrics.ram.swapTotal) * 100 : 0}%`, 
+                    background: 'linear-gradient(90deg, #10b981, #6366f1)',
+                    height: 4 
+                  }} 
+                />
+              </div>
+              <div style={{ fontSize: '0.68rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                {(metrics.ram.swapTotal > 0 ? (metrics.ram.swapUsed / metrics.ram.swapTotal) * 100 : 0).toFixed(1)}% swap used
+              </div>
+            </div>
+          )}
         </MetricCard>
 
         {/* Disk */}
