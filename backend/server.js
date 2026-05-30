@@ -9,6 +9,8 @@ const path = require('path')
 
 const logger = require('./src/logger')
 const { authMiddleware } = require('./src/authMiddleware')
+const { startBackupScheduler } = require('./src/backupScheduler')
+
 
 // Ensure logs directory exists
 if (!fs.existsSync('logs')) fs.mkdirSync('logs')
@@ -211,6 +213,13 @@ app.listen(PORT, () => {
     env: process.env.NODE_ENV,
     vpsHost: process.env.VPS_HOST || '(not configured)',
   })
+  
+  // Start the background Supabase backup scheduler
+  try {
+    startBackupScheduler()
+  } catch (err) {
+    logger.error('Failed to start backup scheduler', { error: err.message })
+  }
 })
 
 process.on('unhandledRejection', (reason) => {

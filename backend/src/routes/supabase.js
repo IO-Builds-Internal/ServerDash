@@ -1281,6 +1281,133 @@ router.delete('/:id/backups/:filename', (req, res) => {
   }
 })
 
+// ── GET /api/supabase/:id/snapshots ────────────────────────────────────────────
+router.get('/:id/snapshots', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const backupsDir = `${project.composePath}/instance_backups`
+  const autoBackup = project.autoBackup !== undefined ? project.autoBackup : true
+  const backupInterval = project.backupInterval || 'daily'
+  const backupRetention = project.backupRetention !== undefined ? project.backupRetention : 2
+
+  try {
+    if (!fs.existsSync(backupsDir)) {
+      fs.mkdirSync(backupsDir, { recursive: true })
+      return res.json({ backups: [], autoBackup, backupInterval, backupRetention })
+    }
+    const files = fs.readdirSync(backupsDir)
+    const list = files.filter(f => f.endsWith('.zip')).map(f => {
+      const st = fs.statSync(path.join(backupsDir, f))
+      return {
+        name: f.replace('.zip', ''),
+        size: st.size,
+        modifiedAt: st.mtime.toISOString()
+      }
+    }).sort((a, b) => b.name.localeCompare(a.name))
+    res.json({ backups: list, autoBackup, backupInterval, backupRetention })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// ── POST /api/supabase/:id/snapshots/create ────────────────────────────────────
+router.post('/:id/snapshots/create', async (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const retention = project.backupRetention !== undefined ? project.backupRetention : 2
+  try {
+    const cmd = `/opt/supabase-projects/scripts/full_backup.sh "${project.composePath}" ${retention}`
+    const result = await ssh.exec(cmd, { timeout: 600000 })
+    if (result.code === 0) {
+      res.json({ success: true, message: 'Full physical snapshot generated successfully' })
+    } else {
+      res.status(500).json({ error: 'Snapshot creation failed', details: result.stderr || result.stdout })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/supabase/:id/snapshots/:backupName/restore ────────────────────────
+router.post('/:id/snapshots/:backupName/restore', async (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { backupName } = req.params
+  try {
+    const cmd = `/opt/supabase-projects/scripts/full_restore.sh "${project.composePath}" "${backupName}"`
+    const result = await ssh.exec(cmd, { timeout: 600000 })
+    if (result.code === 0) {
+      res.json({ success: true, message: 'Full physical snapshot restored successfully' })
+    } else {
+      res.status(500).json({ error: 'Snapshot restore failed', details: result.stderr || result.stdout })
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── DELETE /api/supabase/:id/snapshots/:backupName ──────────────────────────────
+router.delete('/:id/snapshots/:backupName', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { backupName } = req.params
+  const backupsDir = `${project.composePath}/instance_backups`
+  const dirPath = path.join(backupsDir, path.basename(backupName))
+  const zipPath = `${dirPath}.zip`
+
+  try {
+    if (fs.existsSync(dirPath)) {
+      fs.rmSync(dirPath, { recursive: true, force: true })
+    }
+    if (fs.existsSync(zipPath)) {
+      fs.unlinkSync(zipPath)
+    }
+    res.json({ success: true, message: 'Snapshot deleted successfully' })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── GET /api/supabase/:id/snapshots/:backupName/download ────────────────────────
+router.get('/:id/snapshots/:backupName/download', (req, res) => {
+  const projects = loadProjects()
+  const project = projects.find(p => p.id === req.params.id)
+  if (!project) return res.status(404).json({ error: 'Project not found' })
+
+  const { backupName } = req.params
+  const backupsDir = `${project.composePath}/instance_backups`
+  const zipPath = path.join(backupsDir, `${path.basename(backupName)}.zip`)
+
+  if (!fs.existsSync(zipPath)) return res.status(404).json({ error: 'Snapshot file not found' })
+
+  res.setHeader('Content-Disposition', `attachment; filename="${backupName}.zip"`)
+  res.setHeader('Content-Type', 'application/zip')
+  res.sendFile(zipPath)
+})
+
+// ── POST /api/supabase/:id/snapshots/settings ──────────────────────────────────
+router.post('/:id/snapshots/settings', (req, res) => {
+  const { autoBackup, backupInterval, backupRetention } = req.body
+  const projects = loadProjects()
+  const idx = projects.findIndex(p => p.id === req.params.id)
+  if (idx === -1) return res.status(404).json({ error: 'Project not found' })
+
+  projects[idx].autoBackup = autoBackup !== undefined ? !!autoBackup : true
+  projects[idx].backupInterval = backupInterval || 'daily'
+  projects[idx].backupRetention = backupRetention !== undefined ? parseInt(backupRetention, 10) : 2
+
+  saveProjects(projects)
+  res.json({ success: true, message: 'Backup settings updated successfully' })
+})
+
 
 // ── POST /api/supabase/:id/proxy ──────────────────────────────────────────────
 router.post('/:id/proxy', async (req, res) => {

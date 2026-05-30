@@ -148,6 +148,15 @@ export default function ProjectDetailPage() {
   const [backupsLoading, setBackupsLoading] = useState(false)
   const [backupBusy, setBackupBusy] = useState(false)
 
+  // Snapshots state
+  const [snapshotsList, setSnapshotsList] = useState([])
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false)
+  const [snapshotBusy, setSnapshotBusy] = useState(false)
+  const [autoBackup, setAutoBackup] = useState(true)
+  const [backupInterval, setBackupInterval] = useState('daily')
+  const [backupRetention, setBackupRetention] = useState(2)
+  const [savingSettings, setSavingSettings] = useState(false)
+
   const [newFnName, setNewFnName]   = useState('')
   const [selectedFns, setSelectedFns] = useState(new Set())
   const [fnBusy, setFnBusy]         = useState(null)
@@ -189,6 +198,7 @@ export default function ProjectDetailPage() {
         .catch(() => {})
     } else if (tab === 'backups') {
       fetchBackups()
+      fetchSnapshots()
     }
   }, [tab, id])
 
@@ -337,6 +347,90 @@ export default function ProjectDetailPage() {
       setActionMsg(`✗ Failed to load backups: ${e.message}`)
     }
     setBackupsLoading(false)
+  }
+
+  const fetchSnapshots = async () => {
+    setSnapshotsLoading(true)
+    try {
+      const r = await api.get(`/api/supabase/${id}/snapshots`)
+      setSnapshotsList(r.data.backups || [])
+      setAutoBackup(r.data.autoBackup)
+      setBackupInterval(r.data.backupInterval)
+      setBackupRetention(r.data.backupRetention)
+    } catch (e) {
+      setActionMsg(`✗ Failed to load snapshots: ${e.message}`)
+    }
+    setSnapshotsLoading(false)
+  }
+
+  const createSnapshot = async () => {
+    setSnapshotBusy(true); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/snapshots/create`)
+      setActionMsg('✓ Full physical snapshot generated successfully')
+      fetchSnapshots()
+    } catch (e) {
+      setActionMsg(`✗ Snapshot failed: ${e.response?.data?.error || e.message}`)
+    }
+    setSnapshotBusy(false)
+  }
+
+  const restoreSnapshot = async (name) => {
+    if (!window.confirm(`WARNING: This will completely replace the current PostgreSQL data and storage files with snapshot "${name}". Containers will restart. Are you sure you want to proceed?`)) return
+    setActionBusy('restore-snapshot'); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/snapshots/${name}/restore`)
+      setActionMsg(`✓ Supabase instance successfully restored to snapshot "${name}"`)
+      const r = await api.get(`/api/supabase/${id}/detail`)
+      setDetail(r.data)
+    } catch (e) {
+      setActionMsg(`✗ Restore failed: ${e.response?.data?.error || e.message}`)
+    }
+    setActionBusy(null)
+  }
+
+  const deleteSnapshot = async (name) => {
+    if (!window.confirm(`Are you sure you want to delete snapshot "${name}"?`)) return
+    try {
+      await api.delete(`/api/supabase/${id}/snapshots/${name}`)
+      setActionMsg('✓ Snapshot deleted successfully')
+      fetchSnapshots()
+    } catch (e) {
+      setActionMsg(`✗ Failed to delete snapshot: ${e.message}`)
+    }
+  }
+
+  const downloadSnapshot = async (name) => {
+    setActionMsg('')
+    try {
+      const response = await api.get(`/api/supabase/${id}/snapshots/${name}/download`, {
+        responseType: 'blob'
+      })
+      const url = window.URL.createObjectURL(new Blob([response.data]))
+      const link = document.createElement('a')
+      link.href = url
+      link.setAttribute('download', `${name}.zip`)
+      document.body.appendChild(link)
+      link.click()
+    } catch (e) {
+      setActionMsg(`✗ Download failed: ${e.message}`)
+    }
+  }
+
+  const saveSnapshotSettings = async () => {
+    setSavingSettings(true); setActionMsg('')
+    try {
+      await api.post(`/api/supabase/${id}/snapshots/settings`, {
+        autoBackup,
+        backupInterval,
+        backupRetention
+      })
+      setActionMsg('✓ Auto-backup settings saved successfully')
+      fetchSnapshots()
+    } catch (e) {
+      setActionMsg(`✗ Failed to save settings: ${e.response?.data?.error || e.message}`)
+    }
+    setSavingSettings(false)
   }
 
   const createBackup = async () => {
@@ -1074,6 +1168,182 @@ export default function ProjectDetailPage() {
         {tab === 'backups' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
             
+            {/* FULL PHYSICAL SNAPSHOTS PANEL */}
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Full Instance Physical Snapshots</h3>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+                    Capture full physical snapshots including database storage directories, minio buckets, config files, and environment variables.
+                  </p>
+                </div>
+                
+                <div>
+                  <button 
+                    className="btn btn-primary" 
+                    onClick={createSnapshot} 
+                    disabled={snapshotBusy || snapshotsLoading} 
+                    style={{ display: 'flex', alignItems: 'center', gap: 8, height: 38 }}
+                  >
+                    <RefreshCw size={14} className={(snapshotBusy || snapshotsLoading) ? 'animate-spin' : ''} />
+                    {snapshotBusy ? 'Generating Snapshot...' : '⚡ Generate Full Instance Backup'}
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: 20, display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input 
+                    type="checkbox" 
+                    id="autoBackupCheck"
+                    checked={autoBackup}
+                    onChange={(e) => setAutoBackup(e.target.checked)}
+                    style={{ cursor: 'pointer', width: 16, height: 16 }}
+                  />
+                  <label htmlFor="autoBackupCheck" style={{ fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer', color: 'var(--color-text)' }}>
+                    Enable Background Auto-Backups
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Interval:</span>
+                  <select 
+                    value={backupInterval} 
+                    onChange={(e) => setBackupInterval(e.target.value)}
+                    disabled={!autoBackup}
+                    style={{ 
+                      background: 'var(--color-input-bg)', 
+                      border: '1px solid var(--color-border)', 
+                      borderRadius: 6, 
+                      color: 'var(--color-text)', 
+                      fontSize: '0.8rem', 
+                      padding: '4px 8px',
+                      outline: 'none'
+                    }}
+                  >
+                    <option value="daily">Daily</option>
+                    <option value="weekly">Weekly</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Keep Last:</span>
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="10"
+                    value={backupRetention}
+                    disabled={!autoBackup}
+                    onChange={(e) => setBackupRetention(parseInt(e.target.value, 10) || 2)}
+                    style={{ 
+                      background: 'var(--color-input-bg)', 
+                      border: '1px solid var(--color-border)', 
+                      borderRadius: 6, 
+                      color: 'var(--color-text)', 
+                      fontSize: '0.8rem', 
+                      padding: '4px 8px', 
+                      width: 50,
+                      textAlign: 'center',
+                      outline: 'none'
+                    }}
+                  />
+                  <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Snapshots</span>
+                </div>
+
+                <div style={{ flex: 1, textAlign: 'right' }}>
+                  <button 
+                    className="btn btn-secondary btn-sm" 
+                    onClick={saveSnapshotSettings}
+                    disabled={savingSettings}
+                    style={{ height: 32, padding: '0 16px', fontSize: '0.8rem' }}
+                  >
+                    {savingSettings ? 'Saving...' : 'Save Auto-Backup Settings'}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Snapshots List */}
+            {snapshotsLoading ? (
+              <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <RefreshCw size={32} className="animate-spin" style={{ opacity: 0.5, marginBottom: 12, display: 'inline-block' }} />
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Scanning snapshots directory...</h4>
+              </div>
+            ) : snapshotsList.length === 0 ? (
+              <div className="glass-card" style={{ padding: 48, textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                <Database size={32} style={{ opacity: 0.3, marginBottom: 12 }} />
+                <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>No physical snapshots recorded</h4>
+                <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+                  Generate your first snapshot to back up everything including databases and files cleanly.
+                </p>
+              </div>
+            ) : (
+              <div className="glass-card" style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', fontWeight: 700 }}>Available Physical Snapshots ({snapshotsList.length})</span>
+                  <span style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)' }}>Rollback snapshots are safe inside `volumes/` directory</span>
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  {snapshotsList.map((b, i) => (
+                    <div key={b.name} style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 14,
+                      padding: '16px 20px',
+                      borderBottom: i < snapshotsList.length - 1 ? '1px solid var(--color-border)' : 'none',
+                      transition: 'background 0.2s',
+                      flexWrap: 'wrap'
+                    }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(16,185,129,0.06)', border: '1px solid rgba(16,185,129,0.12)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Database size={15} color="var(--color-success)" />
+                      </div>
+                      
+                      <div style={{ flex: 1, minWidth: 200 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', fontWeight: 700, color: 'var(--color-text)' }}>{b.name}</span>
+                        <div style={{ fontSize: '0.74rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                          Created on {new Date(b.modifiedAt).toLocaleString()}
+                        </div>
+                      </div>
+
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', paddingRight: 20 }}>
+                        {(b.size / (1024 * 1024)).toFixed(1)} MB
+                      </span>
+
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => downloadSnapshot(b.name)}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <Download size={12} />
+                          Download
+                        </button>
+                        <button 
+                          className="btn btn-primary btn-sm" 
+                          onClick={() => restoreSnapshot(b.name)}
+                          disabled={!!actionBusy}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4 }}
+                        >
+                          <RefreshCw size={12} className={actionBusy === 'restore-snapshot' ? 'animate-spin' : ''} />
+                          Restore
+                        </button>
+                        <button 
+                          className="btn btn-secondary btn-sm" 
+                          onClick={() => deleteSnapshot(b.name)}
+                          style={{ height: 30, padding: '0 12px', fontSize: '0.76rem', display: 'flex', alignItems: 'center', gap: 4, borderColor: 'rgba(239,68,68,0.2)', color: 'var(--color-danger)' }}
+                        >
+                          <Trash2 size={12} />
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* LOGICAL DATABASE SQL BACKUPS */}
             <div className="glass-card" style={{ padding: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800 }}>Isolated Database Backups Panel</h3>
