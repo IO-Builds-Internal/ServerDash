@@ -382,13 +382,14 @@ export default function OverviewPage({ onConnectionChange }) {
                   {metrics.ram.swapUsed?.toFixed(1)} GB / {metrics.ram.swapTotal?.toFixed(1)} GB
                 </span>
               </div>
-              <div className="progress-bar" style={{ height: 4, background: 'rgba(255,255,255,0.03)' }}>
+              <div className="progress-bar" style={{ height: '4px', background: 'rgba(255,255,255,0.06)' }}>
                 <div 
                   className="progress-fill" 
                   style={{ 
                     width: `${metrics.ram.swapTotal > 0 ? (metrics.ram.swapUsed / metrics.ram.swapTotal) * 100 : 0}%`, 
                     background: 'linear-gradient(90deg, #10b981, #6366f1)',
-                    height: 4 
+                    height: '4px',
+                    transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)'
                   }} 
                 />
               </div>

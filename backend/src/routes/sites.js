@@ -1505,16 +1505,19 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
       send('✓ .env file written')
     }
 
+    // Load package.json if it exists
+    let pkgJson = {}
+    const pkgPath = path.join(sitePath, 'package.json')
+    if (fs.existsSync(pkgPath)) {
+      try {
+        pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+      } catch {}
+    }
+
     // --- Node.js: install → build → PM2 start ────────────────────────────────
     // User explicitly selected "Node.js" in the wizard, so we ALWAYS run this
     // as a server app with PM2. No SPA auto-detection — use "Static/SPA" type for that.
     if (type === 'node') {
-      let pkgJson = {}
-      const pkgPath = path.join(sitePath, 'package.json')
-      if (fs.existsSync(pkgPath)) {
-        try { pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) } catch {}
-      }
-
       const prefix = nodeShellPrefix(nodeVersion)
 
       // ── Step 1: Install dependencies ────────────────────────────────────────
@@ -1675,6 +1678,7 @@ if __name__ == '__main__':
     }
 
     // --- Nginx config ────────────────────────────────────────────────────────
+    const isSpaForNginx = type === 'static' && detectIsSpa(pkgJson, nodeStartCommand, nodeSubtype)
     const phpRoot = phpPreset === 'laravel' && fs.existsSync(path.join(sitePath, 'public')) ? `${sitePath}/public` : sitePath
     const requestedNodeOutput = nodeOutputDir ? path.join(sitePath, nodeOutputDir) : ''
 
