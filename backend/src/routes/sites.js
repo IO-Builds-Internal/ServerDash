@@ -9,6 +9,14 @@ const logger = require('../logger')
 const multer = require('multer')
 const upload = multer({ dest: '/tmp/site-uploads/' })
 
+// GitHub integration: auto-inject stored token for GitHub URLs
+// getStoredGithubToken returns null if GitHub is not connected or URL is not GitHub
+let getStoredGithubToken = () => null
+try {
+  const githubModule = require('./github')
+  if (githubModule.getStoredGithubToken) getStoredGithubToken = githubModule.getStoredGithubToken
+} catch {}
+
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
 const cleanDomain = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9.-]/g, '')
 const cleanName = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
@@ -840,6 +848,18 @@ router.post('/:id/deploy', async (req, res) => {
 
     const commitHash = req.body?.commitHash || req.query?.commitHash
     if (fs.existsSync(path.join(root, '.git'))) {
+      // Auto-inject stored GitHub token if available for this repo
+      try {
+        const { stdout: remoteUrl } = await execAsync(`cd "${root}" && git remote get-url origin 2>/dev/null || true`)
+        const gitRemote = remoteUrl.trim()
+        const storedToken = getStoredGithubToken(gitRemote)
+        if (storedToken && gitRemote && gitRemote.includes('github.com')) {
+          const u = new URL(gitRemote.replace(/^git@github\.com:/, 'https://github.com/').replace(/:(\w)/, '/$1'))
+          u.username = 'oauth2'; u.password = storedToken
+          await execAsync(`cd "${root}" && git remote set-url origin ${shellQuote(u.toString())} 2>&1`)
+        }
+      } catch {}
+
       if (commitHash) {
         send(`Restoring / Rolling back to commit ${commitHash}…`)
         await execAsync(`cd "${root}" && git fetch origin 2>&1 || true`)
@@ -1501,9 +1521,12 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
     // --- Source ---
     if (source === 'git' && gitRepo && type !== 'proxy') {
       let cloneUrl = gitRepo
-      if (gitUser && gitToken) {
+      // Use explicitly provided credentials first, then fall back to stored GitHub token
+      const effectiveToken = gitToken || getStoredGithubToken(gitRepo)
+      const effectiveUser = gitUser || (effectiveToken && !gitToken ? 'oauth2' : '')
+      if (effectiveUser && effectiveToken) {
         const u = new URL(gitRepo)
-        u.username = gitUser; u.password = gitToken
+        u.username = effectiveUser; u.password = effectiveToken
         cloneUrl = u.toString()
       }
       if (fs.existsSync(path.join(sitePath, '.git'))) {

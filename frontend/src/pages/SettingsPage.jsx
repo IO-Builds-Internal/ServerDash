@@ -1,8 +1,15 @@
-import { useState, useEffect } from 'react'
-import { Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, CheckCircle, Shield } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, CheckCircle, Shield, Link, Unlink, RefreshCw, X, Copy, ExternalLink } from 'lucide-react'
 import api from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
+
+// Inline GitHub logo SVG (lucide-react version in use doesn't include it)
+const GithubIcon = ({ size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} role="img" aria-label="GitHub">
+    <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.09.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.03-2.682-.103-.253-.446-1.27.098-2.646 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.376.202 2.394.1 2.646.64.698 1.026 1.591 1.026 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.577.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+  </svg>
+)
 
 export default function SettingsPage() {
   const { user } = useAuth()
@@ -20,6 +27,16 @@ export default function SettingsPage() {
   const [swapActionBusy, setSwapActionBusy] = useState(false)
   const [swapMsg, setSwapMsg] = useState('')
 
+  // ── GitHub Integration State ───────────────────────────────────────────────
+  const [ghStatus, setGhStatus] = useState({ connected: false, clientIdConfigured: false })
+  const [ghLoading, setGhLoading] = useState(true)
+  const [ghConnecting, setGhConnecting] = useState(false)
+  const [ghDeviceFlow, setGhDeviceFlow] = useState(null) // { user_code, verification_uri, device_code, interval }
+  const [ghPollStatus, setGhPollStatus] = useState('') // 'polling'|'success'|'error'|''
+  const [ghPollMsg, setGhPollMsg] = useState('')
+  const pollIntervalRef = useRef(null)
+  const [ghCopied, setGhCopied] = useState(false)
+
   const fetchSwap = async () => {
     setSwapLoading(true)
     try {
@@ -34,7 +51,79 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchSwap()
+    fetchGhStatus()
   }, [])
+
+  // ── GitHub Integration Handlers ─────────────────────────────────────────────
+  const fetchGhStatus = async () => {
+    setGhLoading(true)
+    try {
+      const r = await api.get('/api/github/status')
+      setGhStatus(r.data)
+    } catch {}
+    setGhLoading(false)
+  }
+
+  const startGithubConnect = async () => {
+    setGhConnecting(true)
+    setGhDeviceFlow(null)
+    setGhPollStatus(''); setGhPollMsg('')
+    try {
+      const r = await api.post('/api/github/connect/start')
+      setGhDeviceFlow(r.data)
+      setGhPollStatus('polling')
+      setGhPollMsg('Waiting for you to authorize on GitHub…')
+      // Start polling at the interval returned by GitHub
+      const interval = (r.data.interval || 5) * 1000
+      pollIntervalRef.current = setInterval(() => pollGithubToken(r.data.device_code), interval)
+    } catch (e) {
+      setGhPollStatus('error')
+      setGhPollMsg(e.response?.data?.error || e.message)
+    }
+    setGhConnecting(false)
+  }
+
+  const pollGithubToken = async (device_code) => {
+    try {
+      const r = await api.post('/api/github/connect/poll', { device_code })
+      if (r.data.status === 'success') {
+        clearInterval(pollIntervalRef.current)
+        setGhPollStatus('success')
+        setGhPollMsg(`✓ Connected as @${r.data.login}`)
+        setGhDeviceFlow(null)
+        await fetchGhStatus()
+      } else if (r.data.status === 'error') {
+        clearInterval(pollIntervalRef.current)
+        setGhPollStatus('error')
+        setGhPollMsg(r.data.error || 'Authorization failed or expired')
+      }
+      // 'pending' — keep polling
+    } catch {}
+  }
+
+  const cancelGithubConnect = () => {
+    clearInterval(pollIntervalRef.current)
+    setGhDeviceFlow(null)
+    setGhPollStatus('')
+    setGhPollMsg('')
+  }
+
+  const disconnectGithub = async () => {
+    if (!window.confirm('Disconnect GitHub account? Future private repo deployments will require a manual PAT.')) return
+    try {
+      await api.delete('/api/github/disconnect')
+      setGhStatus({ connected: false, clientIdConfigured: ghStatus.clientIdConfigured })
+    } catch (e) {
+      alert('Failed to disconnect: ' + (e.response?.data?.error || e.message))
+    }
+  }
+
+  const copyCode = () => {
+    if (!ghDeviceFlow?.user_code) return
+    navigator.clipboard.writeText(ghDeviceFlow.user_code).catch(() => {})
+    setGhCopied(true)
+    setTimeout(() => setGhCopied(false), 2000)
+  }
 
   const configureSwap = async () => {
     setSwapActionBusy(true)
@@ -382,6 +471,119 @@ export default function SettingsPage() {
               <input className="input" value={apiUrl} onChange={e => setApiUrl(e.target.value)} placeholder="http://localhost:4001" />
             </div>
           </SectionCard>
+
+          {/* ── GitHub Integration Card ────────────────────────────────────── */}
+          <div className="glass-card animate-fade-in" style={{ padding: 26, display:'flex', flexDirection:'column', gap:18 }}>
+            {/* Card Header */}
+            <div style={{ display: 'flex', justifyContent:'space-between', alignItems: 'flex-start', borderBottom:'1px solid var(--color-border)', paddingBottom:12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 34, height: 34, borderRadius: 10, background: ghStatus.connected ? 'rgba(16,185,129,0.08)' : 'rgba(99,102,241,0.08)', border: `1px solid ${ghStatus.connected ? 'rgba(16,185,129,0.2)' : 'rgba(99,102,241,0.15)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink:0 }}>
+                  <GithubIcon size={16} color={ghStatus.connected ? 'var(--color-success)' : 'var(--color-primary)'} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 800 }}>GitHub Account Integration</h3>
+                  <p style={{ margin: '2px 0 0 0', fontSize:'0.76rem', color:'var(--color-text-muted)' }}>Link your GitHub account for seamless private repo deployments.</p>
+                </div>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={fetchGhStatus} disabled={ghLoading} style={{ padding: '6px 10px' }}>
+                <RefreshCw size={12} style={{ animation: ghLoading ? 'spin 1s linear infinite' : 'none' }} />
+              </button>
+            </div>
+
+            {/* Connected state */}
+            {ghStatus.connected ? (
+              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 14px', background:'rgba(16,185,129,0.04)', border:'1px solid rgba(16,185,129,0.15)', borderRadius:10 }}>
+                  {ghStatus.avatarUrl && (
+                    <img src={ghStatus.avatarUrl} alt="avatar" style={{ width:40, height:40, borderRadius:'50%', border:'2px solid rgba(16,185,129,0.3)', flexShrink:0 }} />
+                  )}
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:700, fontSize:'0.9rem' }}>{ghStatus.name || ghStatus.login}</div>
+                    <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)' }}>@{ghStatus.login}</div>
+                    {ghStatus.connectedAt && (
+                      <div style={{ fontSize:'0.7rem', color:'var(--color-text-muted)', marginTop:2 }}>
+                        Linked {new Date(ghStatus.connectedAt).toLocaleDateString()}
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display:'flex', alignItems:'center', gap:6, padding:'4px 10px', background:'rgba(16,185,129,0.1)', borderRadius:20 }}>
+                    <CheckCircle size={12} color="var(--color-success)" />
+                    <span style={{ fontSize:'0.72rem', fontWeight:700, color:'var(--color-success)' }}>Connected</span>
+                  </div>
+                </div>
+                <div style={{ fontSize:'0.8rem', color:'var(--color-text-muted)', padding:'8px 12px', background:'rgba(255,255,255,0.02)', borderRadius:8, border:'1px solid var(--color-border)' }}>
+                  ✓ Private GitHub repositories will now deploy automatically without needing a Personal Access Token.
+                </div>
+                <button className="btn btn-secondary" onClick={disconnectGithub} style={{ color:'var(--color-danger)', borderColor:'rgba(239,68,68,0.2)', display:'flex', alignItems:'center', gap:6, justifyContent:'center', fontSize:'0.8rem' }}>
+                  <Unlink size={13} /> Disconnect GitHub Account
+                </button>
+              </div>
+            ) : (
+              <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                {/* Device flow modal overlay */}
+                {ghDeviceFlow && (
+                  <div style={{ padding:18, background:'rgba(99,102,241,0.05)', border:'1px solid rgba(99,102,241,0.2)', borderRadius:12, display:'flex', flexDirection:'column', gap:14 }}>
+                    <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div style={{ fontWeight:700, fontSize:'0.875rem' }}>🔑 Authorize on GitHub</div>
+                      <button onClick={cancelGithubConnect} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--color-text-muted)', padding:4 }}><X size={14} /></button>
+                    </div>
+                    <div style={{ fontSize:'0.82rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                      1. Copy the code below<br />
+                      2. Click the button to open GitHub<br />
+                      3. Paste the code and click <strong>Authorize</strong>
+                    </div>
+                    {/* User code display */}
+                    <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      <div style={{ flex:1, fontFamily:'var(--font-mono)', fontSize:'1.4rem', fontWeight:800, letterSpacing:'0.15em', padding:'10px 14px', background:'var(--color-surface-3)', border:'2px solid rgba(99,102,241,0.3)', borderRadius:10, textAlign:'center', color:'var(--color-primary)' }}>
+                        {ghDeviceFlow.user_code}
+                      </div>
+                      <button className="btn btn-secondary btn-sm" onClick={copyCode} style={{ flexShrink:0, height:44 }}>
+                        {ghCopied ? <CheckCircle size={14} color="var(--color-success)" /> : <Copy size={14} />}
+                      </button>
+                    </div>
+                    {/* Open GitHub button */}
+                    <a href={ghDeviceFlow.verification_uri} target="_blank" rel="noopener noreferrer"
+                      style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:8, padding:'10px 16px', background:'rgba(99,102,241,0.15)', border:'1px solid rgba(99,102,241,0.3)', borderRadius:8, color:'var(--color-primary)', fontWeight:700, fontSize:'0.85rem', textDecoration:'none', transition:'all 0.15s' }}>
+                      <ExternalLink size={14} /> Open GitHub Device Auth
+                    </a>
+                    {/* Polling status */}
+                    {ghPollStatus && (
+                      <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:'0.8rem', color: ghPollStatus === 'error' ? 'var(--color-danger)' : ghPollStatus === 'success' ? 'var(--color-success)' : 'var(--color-text-muted)' }}>
+                        {ghPollStatus === 'polling' && <div style={{ width:12, height:12, border:'2px solid rgba(99,102,241,0.3)', borderTop:'2px solid var(--color-primary)', borderRadius:'50%', animation:'spin 1s linear infinite', flexShrink:0 }} />}
+                        {ghPollStatus === 'success' && <CheckCircle size={12} color="var(--color-success)" />}
+                        {ghPollMsg}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {!ghDeviceFlow && (
+                  <>
+                    {!ghStatus.clientIdConfigured && (
+                      <div style={{ padding:'10px 12px', background:'rgba(245,158,11,0.06)', border:'1px solid rgba(245,158,11,0.2)', borderRadius:8, fontSize:'0.78rem', color:'var(--color-warning)' }}>
+                        ⚠ <strong>GITHUB_CLIENT_ID</strong> not set in <code>.env</code>. Create a GitHub OAuth App and add the Client ID to enable this feature.
+                      </div>
+                    )}
+                    <div style={{ fontSize:'0.8rem', color:'var(--color-text-muted)', lineHeight:1.6 }}>
+                      Connect your GitHub account to enable private repo deployments without entering a Personal Access Token each time.
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      onClick={startGithubConnect}
+                      disabled={ghConnecting || !ghStatus.clientIdConfigured}
+                      style={{ display:'flex', alignItems:'center', gap:8, justifyContent:'center' }}
+                    >
+                      <GithubIcon size={15} />
+                      {ghConnecting ? 'Starting…' : 'Connect GitHub Account'}
+                    </button>
+                    {ghPollStatus === 'error' && (
+                      <div style={{ fontSize:'0.78rem', color:'var(--color-danger)' }}>✗ {ghPollMsg}</div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

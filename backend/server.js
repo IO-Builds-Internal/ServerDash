@@ -153,6 +153,7 @@ const snapshotsRouter = require('./src/routes/snapshots')
 const firewallRouter = require('./src/routes/firewall')
 const analyticsRouter = require('./src/routes/analytics')
 const processesRouter = require('./src/routes/processes')
+const githubRouter = require('./src/routes/github')
 
 // Apply auth to all /api routes below this point
 app.use('/api', authMiddleware)
@@ -171,6 +172,7 @@ app.use('/api/snapshots', snapshotsRouter)
 app.use('/api/firewall', firewallRouter)
 app.use('/api/analytics', analyticsRouter)
 app.use('/api/processes', processesRouter)
+app.use('/api/github', githubRouter)
 
 // Settings (persisted file store)
 const SETTINGS_FILE = path.join(__dirname, 'data', 'settings.json')
@@ -329,6 +331,7 @@ app.listen(PORT, () => {
   logger.info(`ServerDash backend running on port ${PORT}`, {
     env: process.env.NODE_ENV,
     vpsHost: process.env.VPS_HOST || '(not configured)',
+    githubClientId: process.env.GITHUB_CLIENT_ID ? '✓ configured' : '✗ not set (GitHub integration disabled)',
   })
   
   // Start the background Supabase backup scheduler

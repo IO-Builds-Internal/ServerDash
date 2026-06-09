@@ -1,11 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
-import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes, Database } from 'lucide-react'
+import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, CheckCircle, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes, Database, GitBranch } from 'lucide-react'
 import { localAuth } from '../lib/auth'
 import api from '../lib/api'
 
 import { Dialog, Overlay } from '../components/Dialog'
+
+// Inline GitHub logo SVG (lucide-react version in use doesn't include it)
+const GithubIcon = ({ size = 16, color = 'currentColor' }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={color} role="img" aria-label="GitHub">
+    <path d="M12 2C6.477 2 2 6.477 2 12c0 4.418 2.865 8.166 6.839 9.489.5.09.682-.217.682-.482 0-.237-.009-.868-.013-1.703-2.782.604-3.369-1.342-3.369-1.342-.454-1.154-1.11-1.462-1.11-1.462-.908-.62.069-.608.069-.608 1.003.07 1.531 1.03 1.531 1.03.892 1.529 2.341 1.087 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.11-4.555-4.943 0-1.091.39-1.984 1.03-2.682-.103-.253-.446-1.27.098-2.646 0 0 .84-.269 2.75 1.025A9.578 9.578 0 0 1 12 6.836c.85.004 1.705.114 2.504.337 1.909-1.294 2.747-1.025 2.747-1.025.546 1.376.202 2.394.1 2.646.64.698 1.026 1.591 1.026 2.682 0 3.841-2.337 4.687-4.565 4.935.359.309.678.919.678 1.852 0 1.336-.012 2.415-.012 2.741 0 .267.18.577.688.48C19.138 20.163 22 16.418 22 12c0-5.523-4.477-10-10-10z" />
+  </svg>
+)
 
 // ── Nginx Config Editor Modal ────────────────────────────────────────────────
 function NginxEditor({ site, onClose }) {
@@ -83,9 +90,25 @@ function Wizard({ onClose, onCreated }) {
   const termRef = useRef()
   const fileRef = useRef()
 
+  // ── GitHub integration ────────────────────────────────────────────────
+  const [ghConnected, setGhConnected] = useState(false)
+  const [ghLogin, setGhLogin] = useState('')
+  const [ghRepos, setGhRepos] = useState([])
+  const [ghBranches, setGhBranches] = useState([])
+  const [showRepoBrowser, setShowRepoBrowser] = useState(false)
+  const [repoSearch, setRepoSearch] = useState('')
+  const [repoLoading, setRepoLoading] = useState(false)
+  const [branchLoading, setBranchLoading] = useState(false)
+  const [selectedRepo, setSelectedRepo] = useState(null) // the full repo object
+  const [selectedBranch, setSelectedBranch] = useState('')
+
   useEffect(() => {
     api.get('/api/sites/node-versions').then(r => setNodeVersions(r.data.versions||[])).catch(()=>{})
     api.get('/api/sites/suggest-port', { params:{start:3000} }).then(r => { setPort(r.data.port); setSuggestedPort(r.data.port) }).catch(()=>{})
+    // Check GitHub connection status
+    api.get('/api/github/status').then(r => {
+      if (r.data.connected) { setGhConnected(true); setGhLogin(r.data.login || '') }
+    }).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -122,6 +145,41 @@ function Wizard({ onClose, onCreated }) {
     try { const r = await api.get('/api/sites/check-repo', { params:{url} }); setGitVisibility(r.data.visibility) }
     catch { setGitVisibility('unknown') }
     setGitCheckBusy(false)
+  }
+
+  const openRepoBrowser = async () => {
+    setShowRepoBrowser(true)
+    setRepoSearch('')
+    setSelectedRepo(null)
+    setGhBranches([])
+    if (ghRepos.length > 0) return // already loaded
+    setRepoLoading(true)
+    try {
+      const r = await api.get('/api/github/repos', { params: { per_page: 100, sort: 'pushed' } })
+      setGhRepos(r.data.repos || [])
+    } catch {}
+    setRepoLoading(false)
+  }
+
+  const selectGhRepo = async (repo) => {
+    setSelectedRepo(repo)
+    setSelectedBranch(repo.defaultBranch || 'main')
+    setBranchLoading(true)
+    setGhBranches([])
+    try {
+      const r = await api.get(`/api/github/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/branches`)
+      setGhBranches(r.data.branches || [])
+    } catch {}
+    setBranchLoading(false)
+  }
+
+  const confirmGhRepoSelection = () => {
+    if (!selectedRepo) return
+    setGitUrl(selectedRepo.url)
+    setGitBranch(selectedBranch || selectedRepo.defaultBranch || 'main')
+    setGitVisibility(selectedRepo.private ? 'private' : 'public')
+    setShowRepoBrowser(false)
+    // If private, no manual token needed — stored GitHub token will be used
   }
 
   const deploy = async () => {
@@ -274,25 +332,142 @@ function Wizard({ onClose, onCreated }) {
                   <p style={{ margin:'4px 0 0' }}>Add files, connect Git, or run commands later.</p>
                 </div>
               ) : source === 'git' ? (
-                <div>
-                  <label className="label">Git Repository URL</label>
-                  <div style={{ position: 'relative' }}>
-                    <input className="input" value={gitUrl} onChange={e => { setGitUrl(e.target.value); setGitVisibility(null) }} onBlur={() => checkGitRepo(gitUrl)} placeholder="https://github.com/user/repo" style={{ paddingRight: 120 }} />
-                    {gitCheckBusy && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Checking…</span>}
-                  {gitVisibility === 'public' && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: 4 }}><Unlock size={11} /> Public</span>}
-                    {(gitVisibility === 'private' || gitVisibility === 'unknown') && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', gap: 4 }}><Lock size={11} /> Private / Unknown</span>}
-                  </div>
-                  {(gitVisibility === 'private' || gitVisibility === 'unknown') && (
-                    <div style={{ marginTop: 12, padding: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 8 }}>
-                      <div style={{ fontSize: '0.8125rem', fontWeight: 600, marginBottom: 10, color: 'var(--color-warning)' }}>🔒 Private repository detected (or unknown visibility). Enter credentials if required.</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                        <div><label className="label">Git Username (or token name)</label><input className="input" value={gitUser} onChange={e => setGitUser(e.target.value)} placeholder="username" /></div>
-                        <div><label className="label">Access Token / PAT</label><input className="input" type="password" value={gitToken} onChange={e => setGitToken(e.target.value)} placeholder="ghp_xxxxx" /></div>
+                <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+                  {/* GitHub quick-pick — only shown when GitHub account is linked */}
+                  {ghConnected && (
+                    <div style={{ padding:'10px 14px', background:'rgba(16,185,129,0.04)', border:'1px solid rgba(16,185,129,0.2)', borderRadius:10, display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                        <GithubIcon size={14} color="var(--color-success)" />
+                        <span style={{ fontSize:'0.8rem', fontWeight:600, color:'var(--color-text)' }}>GitHub</span>
+                        <span style={{ fontSize:'0.75rem', color:'var(--color-text-muted)' }}>@{ghLogin}</span>
                       </div>
-                      <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 8 }}>Generate a Personal Access Token (PAT) from your Git provider (GitHub/GitLab/Bitbucket).</p>
+                      <button className="btn btn-secondary btn-sm" onClick={openRepoBrowser} style={{ fontSize:'0.75rem', padding:'4px 10px', borderColor:'rgba(16,185,129,0.3)', color:'var(--color-success)' }}>
+                        <Search size={11} /> Browse Repos
+                      </button>
                     </div>
                   )}
-                  <div style={{ marginTop: 10 }}><label className="label">Branch</label><input className="input" value={gitBranch} onChange={e => setGitBranch(e.target.value)} placeholder="main" /></div>
+
+                  {/* Repo Browser Modal */}
+                  {showRepoBrowser && (
+                    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.7)', zIndex:200, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+                      <div className="glass-card" style={{ width:'100%', maxWidth:620, maxHeight:'80vh', display:'flex', flexDirection:'column', padding:0, overflow:'hidden' }}>
+                        {/* Modal header */}
+                        <div style={{ padding:'14px 18px', borderBottom:'1px solid var(--color-border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                          <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                            <GithubIcon size={15} color="var(--color-primary)" />
+                            <span style={{ fontWeight:700 }}>Select Repository</span>
+                            <span style={{ fontSize:'0.75rem', color:'var(--color-text-muted)' }}>@{ghLogin}</span>
+                          </div>
+                          <button onClick={() => setShowRepoBrowser(false)} style={{ background:'none', border:'none', cursor:'pointer', color:'var(--color-text-muted)', padding:4 }}><X size={14} /></button>
+                        </div>
+
+                        {/* Search */}
+                        <div style={{ padding:'10px 14px', borderBottom:'1px solid var(--color-border)' }}>
+                          <div style={{ position:'relative' }}>
+                            <Search size={13} style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'var(--color-text-muted)', pointerEvents:'none' }} />
+                            <input
+                              className="input"
+                              placeholder="Search repositories…"
+                              value={repoSearch}
+                              onChange={e => setRepoSearch(e.target.value)}
+                              style={{ paddingLeft:30, height:34 }}
+                              autoFocus
+                            />
+                          </div>
+                        </div>
+
+                        {/* Repo list */}
+                        <div style={{ overflowY:'auto', flex:1 }}>
+                          {repoLoading ? (
+                            <div style={{ padding:32, textAlign:'center', color:'var(--color-text-muted)', fontSize:'0.875rem' }}>Loading repositories…</div>
+                          ) : (
+                            ghRepos
+                              .filter(r => !repoSearch || r.fullName.toLowerCase().includes(repoSearch.toLowerCase()))
+                              .map(repo => (
+                                <div
+                                  key={repo.id}
+                                  onClick={() => selectGhRepo(repo)}
+                                  style={{
+                                    padding:'10px 16px',
+                                    cursor:'pointer',
+                                    borderBottom:'1px solid var(--color-border)',
+                                    background: selectedRepo?.id === repo.id ? 'rgba(99,102,241,0.08)' : 'transparent',
+                                    transition:'background 0.1s',
+                                    display:'flex', alignItems:'center', gap:12
+                                  }}
+                                >
+                                  <div style={{ flex:1, minWidth:0 }}>
+                                    <div style={{ fontWeight:600, fontSize:'0.875rem', display:'flex', alignItems:'center', gap:6 }}>
+                                      {repo.fullName}
+                                      {repo.private && <span style={{ fontSize:'0.65rem', padding:'1px 6px', borderRadius:4, background:'rgba(245,158,11,0.1)', color:'var(--color-warning)', fontWeight:700 }}>Private</span>}
+                                    </div>
+                                    {repo.description && <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{repo.description}</div>}
+                                    <div style={{ fontSize:'0.7rem', color:'var(--color-text-muted)', marginTop:2 }}>
+                                      {repo.language && <span style={{ marginRight:8 }}>● {repo.language}</span>}
+                                      Default: <code>{repo.defaultBranch}</code>
+                                    </div>
+                                  </div>
+                                  {selectedRepo?.id === repo.id && <CheckCircle size={14} color="var(--color-primary)" />}
+                                </div>
+                              ))
+                          )}
+                        </div>
+
+                        {/* Branch selector + confirm */}
+                        {selectedRepo && (
+                          <div style={{ padding:'12px 16px', borderTop:'1px solid var(--color-border)', display:'flex', alignItems:'center', gap:10 }}>
+                            <div style={{ flex:1 }}>
+                              <label style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', display:'block', marginBottom:4 }}>Branch</label>
+                              {branchLoading ? (
+                                <span style={{ fontSize:'0.8rem', color:'var(--color-text-muted)' }}>Loading branches…</span>
+                              ) : (
+                                <select className="input" style={{ height:32, fontSize:'0.8rem' }} value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}>
+                                  {ghBranches.map(b => <option key={b.name} value={b.name}>{b.name}</option>)}
+                                </select>
+                              )}
+                            </div>
+                            <button className="btn btn-primary" onClick={confirmGhRepoSelection} style={{ flexShrink:0, height:32, fontSize:'0.8rem', padding:'0 14px' }}>
+                              <Check size={13} /> Use This Repo
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual URL input */}
+                  <div>
+                    <label className="label">Git Repository URL</label>
+                    <div style={{ position: 'relative' }}>
+                      <input className="input" value={gitUrl} onChange={e => { setGitUrl(e.target.value); setGitVisibility(null) }} onBlur={() => checkGitRepo(gitUrl)} placeholder="https://github.com/user/repo" style={{ paddingRight: 120 }} />
+                      {gitCheckBusy && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Checking…</span>}
+                    {gitVisibility === 'public' && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-success)', display: 'flex', alignItems: 'center', gap: 4 }}><Unlock size={11} /> Public</span>}
+                      {(gitVisibility === 'private' || gitVisibility === 'unknown') && <span style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: 'var(--color-warning)', display: 'flex', alignItems: 'center', gap: 4 }}><Lock size={11} /> Private / Unknown</span>}
+                    </div>
+                  </div>
+
+                  {/* Private repo credentials — skip if GitHub connected and URL is github.com */}
+                  {(gitVisibility === 'private' || gitVisibility === 'unknown') && (
+                    <div style={{ marginTop: 0, padding: 14, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 8 }}>
+                      {ghConnected && gitUrl.includes('github.com') ? (
+                        <div style={{ display:'flex', alignItems:'center', gap:8, fontSize:'0.8125rem', color:'var(--color-success)' }}>
+                          <CheckCircle size={14} />
+                          <span>✓ GitHub account linked — private repo will deploy automatically. No PAT needed.</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div style={{ fontSize: '0.8125rem', fontWeight: 600, marginBottom: 10, color: 'var(--color-warning)' }}>🔒 Private repository detected (or unknown visibility). Enter credentials if required.</div>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                            <div><label className="label">Git Username (or token name)</label><input className="input" value={gitUser} onChange={e => setGitUser(e.target.value)} placeholder="username" /></div>
+                            <div><label className="label">Access Token / PAT</label><input className="input" type="password" value={gitToken} onChange={e => setGitToken(e.target.value)} placeholder="ghp_xxxxx" /></div>
+                          </div>
+                          <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 8 }}>Generate a Personal Access Token (PAT) from your Git provider (GitHub/GitLab/Bitbucket).</p>
+                        </>
+                      )}
+                    </div>
+                  )}
+
+                  <div style={{ marginTop: 0 }}><label className="label">Branch</label><input className="input" value={gitBranch} onChange={e => setGitBranch(e.target.value)} placeholder="main" /></div>
                 </div>
               ) : (
                 <div>
