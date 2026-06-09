@@ -422,11 +422,11 @@ async function enrichSitesWithDiagnostics(sites) {
   return sites
 }
 
-async function getPm2Process(domain) {
+async function getPm2Process(domain, id) {
   try {
     const { stdout } = await execAsync("pm2 jlist 2>/dev/null || echo '[]'")
     const list = JSON.parse(stdout.trim() || '[]')
-    return list.find(p => p.name === domain)
+    return list.find(p => p.name === domain || (id && p.name === id))
   } catch {
     return null
   }
@@ -864,7 +864,7 @@ router.post('/:id/deploy', async (req, res) => {
       installCmd = 'npm install'
     }
 
-    let buildCmd = 'npm run build'
+    let buildCmd = pkgJson.scripts?.build ? 'npm run build' : ''
     let restartCmd = `pm2 restart "${site.domain}"`
     let nodeVersion = 'system'
     let customStartCmd = null
@@ -894,13 +894,17 @@ router.post('/:id/deploy', async (req, res) => {
           await execAsync(`cd "${root}" && ${prefix}${buildCmd} 2>&1`)
           send('✓ Build complete')
         } catch (e) {
-          send(`⚠ Build failed: ${e.message}`)
+          send(`✗ Build failed: ${e.message}`)
+          throw new Error('Build step failed.')
         }
       }
     }
 
-    const pm2Proc = await getPm2Process(site.domain)
+    const pm2Proc = await getPm2Process(site.domain, site.id)
     if (pm2Proc) {
+      if (restartCmd === `pm2 restart "${site.domain}"`) {
+        restartCmd = `pm2 restart "${pm2Proc.name}"`
+      }
       if (restartCmd && restartCmd.trim()) {
         try {
           send(`Restarting application: ${restartCmd}…`)
@@ -990,7 +994,7 @@ router.post('/:id/webhook', async (req, res) => {
           installCmd = 'npm install'
         }
 
-        let buildCmd = 'npm run build'
+        let buildCmd = pkgJson.scripts?.build ? 'npm run build' : ''
         let restartCmd = `pm2 restart "${site.domain}"`
         let nodeVersion = 'system'
         let customStartCmd = null
@@ -1020,8 +1024,11 @@ router.post('/:id/webhook', async (req, res) => {
           }
         }
 
-        const pm2Proc = await getPm2Process(site.domain)
+        const pm2Proc = await getPm2Process(site.domain, site.id)
         if (pm2Proc) {
+          if (restartCmd === `pm2 restart "${site.domain}"`) {
+            restartCmd = `pm2 restart "${pm2Proc.name}"`
+          }
           if (restartCmd && restartCmd.trim()) {
             logger.info(`[${site.domain}] ${restartCmd}...`)
             await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
@@ -1112,9 +1119,19 @@ router.get('/:id/build-settings', async (req, res) => {
     if (!site) return res.status(404).json({ error: 'Site not found' })
     const root = site.root || `/var/www/${site.domain}`
     const metaPath = path.join(root, '.serverdash.json')
+    let pkgJson = {}
+    try {
+      pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+    } catch {}
+    let installCmd = 'npm install --production'
+    if (pkgJson.scripts?.['install:all']) {
+      installCmd = 'npm run install:all'
+    } else if (pkgJson.workspaces) {
+      installCmd = 'npm install'
+    }
     let settings = {
-      installCommand: 'npm install --production',
-      buildCommand: 'npm run build',
+      installCommand: installCmd,
+      buildCommand: pkgJson.scripts?.build ? 'npm run build' : '',
       restartCommand: `pm2 restart "${site.domain}"`,
       nodeVersion: 'system'
     }
@@ -1223,7 +1240,9 @@ router.post('/:id/restart', async (req, res) => {
     const sites = await getNginxSites()
     const site = sites.find(s => s.id === id)
     if (!site) return res.status(404).json({ error: 'Site not found' })
-    await execAsync(`pm2 restart ${site.domain} 2>&1 || true`)
+    const pm2Proc = await getPm2Process(site.domain, site.id)
+    const targetName = pm2Proc ? pm2Proc.name : site.domain
+    await execAsync(`pm2 restart ${shellQuote(targetName)} 2>&1 || true`)
     await execAsync('systemctl reload nginx')
     res.json({ success: true })
   } catch (err) {
@@ -1332,6 +1351,18 @@ router.delete('/:id', async (req, res) => {
     }
 
     if (!site) return res.status(404).json({ error: 'Site not found' })
+
+    // Stop and delete PM2 process if exists to prevent process and port leaks
+    try {
+      const pm2Proc = await getPm2Process(site.domain, site.id)
+      if (pm2Proc) {
+        logger.info('Deleting PM2 process during site deletion', { name: pm2Proc.name })
+        await execAsync(`pm2 delete ${shellQuote(pm2Proc.name)} 2>/dev/null || true`)
+        await execAsync('pm2 save 2>/dev/null || true')
+      }
+    } catch (pm2Err) {
+      logger.warn('Failed to delete PM2 process during site deletion', { error: pm2Err.message })
+    }
 
     // Purge Nginx configuration files
     const configFiles = [
@@ -1531,7 +1562,9 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
       }
 
       // ── Step 2: Build (optional) ─────────────────────────────────────────────
-      if (nodeBuildCommand && nodeBuildCommand.trim()) {
+      const hasBuildScript = pkgJson.scripts?.build
+      const shouldRunBuild = nodeBuildCommand && nodeBuildCommand.trim() && (nodeBuildCommand !== 'npm run build' || hasBuildScript)
+      if (shouldRunBuild) {
         send(`▶ ${nodeBuildCommand}…`)
         await tryExec(
           `cd ${shellQuote(sitePath)} && ${prefix}${nodeBuildCommand} 2>&1`,
@@ -1667,11 +1700,19 @@ if __name__ == '__main__':
     if (type === 'static' && fs.existsSync(path.join(sitePath, 'package.json'))) {
       send('Detected package.json for static site')
       try {
+        let pkgJson = {}
+        try {
+          pkgJson = JSON.parse(fs.readFileSync(path.join(sitePath, 'package.json'), 'utf8'))
+        } catch {}
         send('npm install…')
         await execAsync(`cd ${shellQuote(sitePath)} && npm install 2>&1`, { timeout: 180000, maxBuffer: 1024 * 1024 * 10 })
-        send('npm run build…')
-        await execAsync(`cd ${shellQuote(sitePath)} && npm run build 2>&1`, { timeout: 180000, maxBuffer: 1024 * 1024 * 10 })
-        send('✓ Static build complete')
+        if (pkgJson.scripts?.build) {
+          send('npm run build…')
+          await execAsync(`cd ${shellQuote(sitePath)} && npm run build 2>&1`, { timeout: 180000, maxBuffer: 1024 * 1024 * 10 })
+          send('✓ Static build complete')
+        } else {
+          send('No build script detected in package.json, skipping build step')
+        }
       } catch (e) {
         send(`⚠ Static build skipped/failed: ${e.message}`)
       }
