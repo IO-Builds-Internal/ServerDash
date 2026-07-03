@@ -21,6 +21,15 @@ const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
 const cleanDomain = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9.-]/g, '')
 const cleanName = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
 
+function getCentralMetaPath(domain, localRoot) {
+  if (domain === 'bbjdemo.iobuilds.com') {
+    const dir = path.join(__dirname, '..', '..', 'data', 'sites_metadata')
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    return path.join(dir, `${domain}.json`)
+  }
+  return path.join(localRoot, '.serverdash.json')
+}
+
 function nodeShellPrefix(nodeVersion) {
   if (!nodeVersion || nodeVersion === 'system') return ''
   return `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; nvm install ${nodeVersion} >/dev/null 2>&1 || true; nvm use ${nodeVersion} >/dev/null 2>&1 || true; `
@@ -365,6 +374,15 @@ function parseNginxConfig(content, filename) {
     primaryDomain = 'ServerDash Dashboard (Default/Catch-all)'
   }
 
+  let resolvedRoot = root || `/var/www/${primaryDomain}`
+  if (resolvedRoot) {
+    let normalized = resolvedRoot.replace(/\/+$/, '')
+    const projectRoot = normalized.replace(/\/(dist|public|html|build)$/i, '')
+    if (fs.existsSync(projectRoot)) {
+      resolvedRoot = projectRoot
+    }
+  }
+
   return {
     id: filename.replace(/[^a-z0-9]/gi, '-'),
     domain: primaryDomain,
@@ -374,7 +392,7 @@ function parseNginxConfig(content, filename) {
     ssl: sslCert,
     port: listen443 ? 443 : listen80 ? 80 : null,
     proxyPort,
-    root: root || `/var/www/${primaryDomain}`,
+    root: resolvedRoot,
     configFile: `/etc/nginx/sites-enabled/${filename}`,
     gitRepo: null,
     lastDeployed: null,
@@ -738,6 +756,52 @@ router.post('/:id/install-wordpress', async (req, res) => {
   res.end()
 })
 
+// ── POST /api/sites/:id/install-freepos (SSE) ───────────────────────────────────
+router.post('/:id/install-freepos', async (req, res) => {
+  const send = sseSetup(res)
+  const { id } = req.params
+
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) { send('✗ Site not found'); return res.end() }
+
+    send(`▶ Initializing FreePOS.lk installation for ${site.domain}…`)
+    const root = site.root || `/var/www/${site.domain}`
+    
+    // Spawn node script to execute installation and capture output
+    const setupScript = path.join(__dirname, '../utils/setup-freepos.js')
+    const proc = spawn('node', [setupScript, site.domain, root, id])
+
+    proc.stdout.on('data', data => {
+      data.toString().split('\n').filter(Boolean).forEach(line => {
+        send(line)
+      })
+    })
+
+    proc.stderr.on('data', data => {
+      data.toString().split('\n').filter(Boolean).forEach(line => {
+        send(`⚠ ${line}`)
+      })
+    })
+
+    await new Promise((resolve) => {
+      proc.on('close', code => {
+        if (code === 0) {
+          send('✓ FreePOS.lk successfully installed and configured!')
+        } else {
+          send(`✗ Setup script exited with code ${code}`)
+        }
+        resolve()
+      })
+    })
+
+  } catch (err) {
+    send(`✗ Error: ${err.message}`)
+  }
+  res.end()
+})
+
 // ── POST /api/sites/:id/upload-zip ──────────────────────────────────────────────
 router.post('/:id/upload-zip', upload.single('zip'), async (req, res) => {
   const { id } = req.params
@@ -878,6 +942,9 @@ router.post('/:id/deploy', async (req, res) => {
     } catch {}
 
     let installCmd = 'npm install --production'
+    if (pkgJson.scripts?.build) {
+      installCmd = 'npm install'
+    }
     if (pkgJson.scripts?.['install:all']) {
       installCmd = 'npm run install:all'
     } else if (pkgJson.workspaces) {
@@ -889,7 +956,7 @@ router.post('/:id/deploy', async (req, res) => {
     let nodeVersion = 'system'
     let customStartCmd = null
 
-    const metaPath = path.join(root, '.serverdash.json')
+    const metaPath = getCentralMetaPath(site.domain, root)
     if (fs.existsSync(metaPath)) {
       try {
         const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
@@ -1008,6 +1075,9 @@ router.post('/:id/webhook', async (req, res) => {
         } catch {}
 
         let installCmd = 'npm install --production'
+        if (pkgJson.scripts?.build) {
+          installCmd = 'npm install'
+        }
         if (pkgJson.scripts?.['install:all']) {
           installCmd = 'npm run install:all'
         } else if (pkgJson.workspaces) {
@@ -1019,7 +1089,7 @@ router.post('/:id/webhook', async (req, res) => {
         let nodeVersion = 'system'
         let customStartCmd = null
 
-        const metaPath = path.join(root, '.serverdash.json')
+        const metaPath = getCentralMetaPath(site.domain, root)
         if (fs.existsSync(metaPath)) {
           try {
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
@@ -1138,7 +1208,7 @@ router.get('/:id/build-settings', async (req, res) => {
     const site = sites.find(s => s.id === id)
     if (!site) return res.status(404).json({ error: 'Site not found' })
     const root = site.root || `/var/www/${site.domain}`
-    const metaPath = path.join(root, '.serverdash.json')
+    const metaPath = getCentralMetaPath(site.domain, root)
     let pkgJson = {}
     try {
       pkgJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
@@ -1179,7 +1249,7 @@ router.post('/:id/build-settings', async (req, res) => {
     if (!fs.existsSync(root)) {
       fs.mkdirSync(root, { recursive: true })
     }
-    const metaPath = path.join(root, '.serverdash.json')
+    const metaPath = getCentralMetaPath(site.domain, root)
     const settings = {
       installCommand: installCommand || 'npm install --production',
       buildCommand: buildCommand || 'npm run build',
@@ -1968,7 +2038,7 @@ router.get('/:id/mail', (req, res) => {
   const site = resolveSiteRoot(req.params.id)
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let mailSettings = { smtp: { host: '', port: '587', username: '', password: '', encryption: 'TLS' }, mailboxes: [], forwarders: [] }
 
   if (fs.existsSync(metaPath)) {
@@ -1988,7 +2058,7 @@ router.post('/:id/mail/smtp', (req, res) => {
   const site = resolveSiteRoot(req.params.id)
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let meta = {}
   if (fs.existsSync(metaPath)) {
     try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
@@ -2358,7 +2428,7 @@ router.get('/:id/backup', async (req, res) => {
     }
 
     // 4. Copy .serverdash.json if present
-    const metaFile = path.join(site.root, '.serverdash.json')
+    const metaFile = getCentralMetaPath(domain, site.root)
     if (fs.existsSync(metaFile)) {
       fs.copyFileSync(metaFile, `${tmpBackupDir}/.serverdash.json`)
     }
@@ -2433,7 +2503,7 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
 
     // Copy .serverdash.json back
     if (fs.existsSync(metaPath)) {
-      fs.copyFileSync(metaPath, `${targetRoot}/.serverdash.json`)
+      fs.copyFileSync(metaPath, getCentralMetaPath(domain, targetRoot))
     }
 
     // 5. Restore SQL Database if exists

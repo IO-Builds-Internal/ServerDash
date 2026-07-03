@@ -109,6 +109,7 @@ export default function SiteDetailPage() {
   const [wpAdminPass, setWpAdminPass] = useState('')
   const [wpAdminEmail, setWpAdminEmail] = useState('')
   const [wpInstalling, setWpInstalling] = useState(false)
+  const [posInstalling, setPosInstalling] = useState(false)
 
   // ZIP upload state
   const [zipUploadFile, setZipUploadFile] = useState(null)
@@ -174,6 +175,54 @@ export default function SiteDetailPage() {
     } finally {
       setActionBusy(false)
       setWpInstalling(false)
+    }
+  }
+
+  const handleInstallFreePOS = async () => {
+    setActionLogs([`▶ Initializing FreePOS.lk installation for ${site.domain}...`])
+    setShowLogs(true)
+    setActionBusy(true)
+    setPosInstalling(true)
+    setActiveTab('deployments')
+
+    const token = localAuth.getToken() || ''
+    try {
+      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/install-freepos`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        }
+      })
+
+      if (!resp.ok) {
+        throw new Error(`Server returned status code ${resp.status}`)
+      }
+
+      const reader = resp.body.getReader()
+      const dec = new TextDecoder()
+      let buf = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += dec.decode(value, { stream: true })
+        const parts = buf.split('\n')
+        buf = parts.pop()
+        parts.forEach(l => {
+          if (l.startsWith('data: ')) {
+            setActionLogs(prev => [...prev, l.slice(6)])
+          } else if (l.trim()) {
+            setActionLogs(prev => [...prev, l])
+          }
+        })
+      }
+      loadSite()
+    } catch (err) {
+      setActionLogs(prev => [...prev, `✗ FreePOS.lk Installation Failed: ${err.message}`])
+    } finally {
+      setActionBusy(false)
+      setPosInstalling(false)
     }
   }
 
@@ -1096,6 +1145,25 @@ export default function SiteDetailPage() {
                       </button>
                     </div>
                   </form>
+                </div>
+              )}
+
+              {/* FreePOS.lk Bootstrapper Panel */}
+              {(site.type === 'static' || site.type === 'node') && !site.isSystemPanel && (
+                <div className="glass-card animate-fade-in" style={{ padding:24, display:'flex', flexDirection:'column', gap:18 }}>
+                  <h3 style={{ margin:0, fontSize:'1.1rem', fontWeight:800, borderBottom:'1px solid var(--color-border)', paddingBottom:12, display:'flex', alignItems:'center', gap:8 }}>
+                    <Boxes size={18} color="var(--color-primary)"/> One-Click FreePOS.lk Bootstrapper
+                  </h3>
+                  <p style={{ margin:0, fontSize:'0.82rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
+                    Deploy a fully pre-configured, multi-tenant FreePOS.lk system with integrated Supabase backend, database migrations, and Nginx reverse proxy!
+                  </p>
+                  
+                  <div style={{ marginTop:8 }}>
+                    <button onClick={handleInstallFreePOS} className="btn btn-primary" disabled={posInstalling || actionBusy} style={{ width:'100%', display:'flex', alignItems:'center', justifyContent:'center', gap:8 }}>
+                      {posInstalling ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
+                      {posInstalling ? 'Bootstrapping FreePOS (Cloning, Supabase stack, Migrations, Frontend build)...' : 'Deploy FreePOS.lk Core Now'}
+                    </button>
+                  </div>
                 </div>
               )}
 
