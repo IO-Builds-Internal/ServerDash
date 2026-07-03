@@ -34,6 +34,25 @@ try {
   execSync(`git clone https://github.com/dhanushka047/storeharmony-saas.git .`, { cwd: sitePath, stdio: 'inherit' });
   console.log('✓ Codebase cloned successfully');
 
+  // Copy local rebranded/customized components from pos.iobuilds.com if present
+  console.log('[BOOTSTRAP] Injecting local branding overrides and Logo...');
+  const refPath = '/var/www/pos.iobuilds.com';
+  if (fs.existsSync(refPath)) {
+    try {
+      fs.copyFileSync(path.join(refPath, 'src/pages/Landing.tsx'), path.join(sitePath, 'src/pages/Landing.tsx'));
+      if (!fs.existsSync(path.join(sitePath, 'src/components'))) {
+        fs.mkdirSync(path.join(sitePath, 'src/components'), { recursive: true });
+      }
+      fs.copyFileSync(path.join(refPath, 'src/components/Logo.tsx'), path.join(sitePath, 'src/components/Logo.tsx'));
+      fs.copyFileSync(path.join(refPath, 'src/pages/Login.tsx'), path.join(sitePath, 'src/pages/Login.tsx'));
+      fs.copyFileSync(path.join(refPath, 'src/pages/Signup.tsx'), path.join(sitePath, 'src/pages/Signup.tsx'));
+      fs.copyFileSync(path.join(refPath, 'src/components/AppSidebar.tsx'), path.join(sitePath, 'src/components/AppSidebar.tsx'));
+      console.log('✓ Local files successfully copied');
+    } catch (e) {
+      console.warn('⚠ Warning: Failed to copy local overrides:', e.message);
+    }
+  }
+
   // ── Step 2: Determine Available Ports ─────────────────────────────────────
   console.log('[BOOTSTRAP] Allocating unique ports for Supabase stack...');
   let registry = [];
