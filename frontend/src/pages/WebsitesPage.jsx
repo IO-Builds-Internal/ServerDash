@@ -738,9 +738,7 @@ export default function WebsitesPage() {
           setActionMessage('Uploading archive, recreating root folders, mapping virtual hosts, and reconstructing SQL databases. Please wait.')
           setActionLoading(true)
           try {
-            const { data } = await api.post(`/api/sites/restore`, formData, {
-              headers: { 'Content-Type': 'multipart/form-data' }
-            })
+            const { data } = await api.post(`/api/sites/restore`, formData)
             showSuccess('Website Restored', data.message || `✓ Website '${file.name}' successfully restored!`)
             await load()
           } catch (err) {

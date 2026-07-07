@@ -224,7 +224,7 @@ export default function PackagesPage() {
     fd.append('file', file)
     fd.append('dest', zipDest)
     try {
-      const r = await api.post('/api/packages/zip', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      const r = await api.post('/api/packages/zip', fd)
       alert(`✓ Installed successfully!\nOutput: ${r.data.output?.substring(0, 300) || 'Done'}`)
     } catch (e) {
       alert(`✗ Upload/Install failed: ${e.response?.data?.error || e.message}`)

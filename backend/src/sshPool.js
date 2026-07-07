@@ -14,7 +14,7 @@ class LocalExecutor {
     logger.info('Local exec', { command: command.substring(0, 120) })
     
     const cleanEnv = { ...process.env }
-    ;['POSTGRES_PORT', 'POSTGRES_PASSWORD', 'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_DB', 'JWT_SECRET', 'JWT_JWKS'].forEach(k => delete cleanEnv[k])
+    ;['POSTGRES_PORT', 'POSTGRES_PASSWORD', 'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_DB', 'JWT_SECRET', 'JWT_JWKS', 'ADMIN_PASSWORD', 'LOCAL_JWT_SECRET', 'ADMIN_EMAIL', 'PORT'].forEach(k => delete cleanEnv[k])
 
     try {
       const { stdout, stderr } = await execAsync(command, {
@@ -44,7 +44,7 @@ class LocalExecutor {
    */
   stream(command, onData, onEnd) {
     const cleanEnv = { ...process.env }
-    ;['POSTGRES_PORT', 'POSTGRES_PASSWORD', 'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_DB', 'JWT_SECRET', 'JWT_JWKS'].forEach(k => delete cleanEnv[k])
+    ;['POSTGRES_PORT', 'POSTGRES_PASSWORD', 'POSTGRES_HOST', 'POSTGRES_USER', 'POSTGRES_DB', 'JWT_SECRET', 'JWT_JWKS', 'ADMIN_PASSWORD', 'LOCAL_JWT_SECRET', 'ADMIN_EMAIL', 'PORT'].forEach(k => delete cleanEnv[k])
     
     const child = spawn('/bin/bash', ['-c', command], { env: cleanEnv })
     child.stdout.on('data', d => onData(d.toString()))

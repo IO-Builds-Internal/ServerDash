@@ -2,7 +2,32 @@ const express = require('express')
 const router = express.Router()
 const { exec, spawn } = require('child_process')
 const { promisify } = require('util')
-const execAsync = promisify(exec)
+const originalExecAsync = promisify(exec)
+
+const getCleanEnv = (customEnv = {}) => {
+  const env = { ...process.env, ...customEnv }
+  const sensitiveKeys = [
+    'ADMIN_PASSWORD',
+    'LOCAL_JWT_SECRET',
+    'ADMIN_EMAIL',
+    'POSTGRES_PORT',
+    'POSTGRES_PASSWORD',
+    'POSTGRES_HOST',
+    'POSTGRES_USER',
+    'POSTGRES_DB',
+    'JWT_SECRET',
+    'JWT_JWKS',
+    'PORT'
+  ]
+  sensitiveKeys.forEach(k => delete env[k])
+  return env
+}
+
+const execAsync = (command, options = {}) => {
+  const env = getCleanEnv(options.env)
+  return originalExecAsync(command, { ...options, env })
+}
+
 const fs = require('fs')
 const path = require('path')
 const logger = require('../logger')
@@ -1061,6 +1086,18 @@ router.post('/:id/webhook', async (req, res) => {
       try {
         logger.info(`Webhook triggered deployment for ${site.domain}`)
 
+        // Check if auto-deploy is disabled for this site
+        const metaPathCheck = getCentralMetaPath(site.domain, root)
+        if (fs.existsSync(metaPathCheck)) {
+          try {
+            const metaCheck = JSON.parse(fs.readFileSync(metaPathCheck, 'utf8'))
+            if (metaCheck.autoDeployEnabled === false) {
+              logger.info(`[${site.domain}] Auto-deploy is disabled. Skipping webhook deployment.`)
+              return
+            }
+          } catch (e) {}
+        }
+
         if (fs.existsSync(path.join(root, '.git'))) {
           logger.info(`[${site.domain}] git pull...`)
           await execAsync(`cd "${root}" && git pull 2>&1`)
@@ -1258,6 +1295,52 @@ router.post('/:id/build-settings', async (req, res) => {
     }
     fs.writeFileSync(metaPath, JSON.stringify(settings, null, 2), 'utf8')
     res.json({ success: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── GET /api/sites/:id/auto-deploy ─────────────────────────────────────────────
+router.get('/:id/auto-deploy', async (req, res) => {
+  const { id } = req.params
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) return res.status(404).json({ error: 'Site not found' })
+    const root = site.root || `/var/www/${site.domain}`
+    const metaPath = getCentralMetaPath(site.domain, root)
+    let autoDeployEnabled = true // default ON
+    if (fs.existsSync(metaPath)) {
+      try {
+        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+        if (meta.autoDeployEnabled !== undefined) autoDeployEnabled = meta.autoDeployEnabled
+      } catch (e) {}
+    }
+    res.json({ autoDeployEnabled })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── POST /api/sites/:id/auto-deploy ────────────────────────────────────────────
+router.post('/:id/auto-deploy', async (req, res) => {
+  const { id } = req.params
+  const { autoDeployEnabled } = req.body
+  try {
+    const sites = await getNginxSites()
+    const site = sites.find(s => s.id === id)
+    if (!site) return res.status(404).json({ error: 'Site not found' })
+    const root = site.root || `/var/www/${site.domain}`
+    if (!fs.existsSync(root)) fs.mkdirSync(root, { recursive: true })
+    const metaPath = getCentralMetaPath(site.domain, root)
+    let existing = {}
+    if (fs.existsSync(metaPath)) {
+      try { existing = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch (e) {}
+    }
+    existing.autoDeployEnabled = Boolean(autoDeployEnabled)
+    fs.writeFileSync(metaPath, JSON.stringify(existing, null, 2), 'utf8')
+    logger.info(`[${site.domain}] Auto-deploy set to: ${existing.autoDeployEnabled}`)
+    res.json({ success: true, autoDeployEnabled: existing.autoDeployEnabled })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -2617,7 +2700,7 @@ router.get('/:id/exec-stream', async (req, res) => {
   send(`$ ${command}`)
   
   const { spawn } = require('child_process')
-  const child = spawn('/bin/bash', ['-c', `${command} 2>&1`], { cwd: site.root })
+  const child = spawn('/bin/bash', ['-c', `${command} 2>&1`], { cwd: site.root, env: getCleanEnv() })
   
   child.stdout.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
   child.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))

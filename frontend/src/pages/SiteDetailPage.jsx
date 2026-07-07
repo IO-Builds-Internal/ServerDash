@@ -27,6 +27,8 @@ export default function SiteDetailPage() {
   const [gitData, setGitData] = useState(null)
   const [gitLoading, setGitLoading] = useState(false)
   const [gitError, setGitError] = useState(null)
+  const [autoDeployEnabled, setAutoDeployEnabled] = useState(true)
+  const [autoDeployUpdating, setAutoDeployUpdating] = useState(false)
 
   // Build Settings State
   const [buildSettings, setBuildSettings] = useState({
@@ -233,9 +235,7 @@ export default function SiteDetailPage() {
     formData.append('zip', file)
 
     try {
-      await api.post(`/api/sites/${id}/upload-zip`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      })
+      await api.post(`/api/sites/${id}/upload-zip`, formData)
       showSuccess('ZIP Uploaded', `✓ ZIP file '${file.name}' has been successfully uploaded and extracted into your site root!`)
       setZipUploadFile(null)
       loadSite()
@@ -423,12 +423,29 @@ export default function SiteDetailPage() {
     setGitLoading(true)
     setGitError(null)
     try {
-      const r = await api.get(`/api/sites/${id}/git`)
-      setGitData(r.data)
+      const [gitRes, autoRes] = await Promise.all([
+        api.get(`/api/sites/${id}/git`),
+        api.get(`/api/sites/${id}/auto-deploy`).catch(() => ({ data: { autoDeployEnabled: true } }))
+      ])
+      setGitData(gitRes.data)
+      setAutoDeployEnabled(autoRes.data.autoDeployEnabled)
     } catch (e) {
       setGitError(e.response?.data?.error || e.message)
     } finally {
       setGitLoading(false)
+    }
+  }
+
+  const toggleAutoDeploy = async () => {
+    setAutoDeployUpdating(true)
+    try {
+      const newVal = !autoDeployEnabled
+      await api.post(`/api/sites/${id}/auto-deploy`, { autoDeployEnabled: newVal })
+      setAutoDeployEnabled(newVal)
+    } catch (e) {
+      showError('Error', 'Could not update auto-deploy setting: ' + (e.response?.data?.error || e.message))
+    } finally {
+      setAutoDeployUpdating(false)
     }
   }
 
@@ -1531,14 +1548,42 @@ export default function SiteDetailPage() {
                     </div>
                   </div>
 
-                  <div style={{ background:'rgba(255,255,255,0.02)', padding:18, borderRadius:12, border:'1px solid var(--color-border)' }}>
-                    <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em' }}>Auto-Deployment Poller</div>
-                    <div style={{ fontSize:'0.9rem', fontWeight:700, marginTop:8, color:'var(--color-success)', display:'flex', alignItems:'center', gap:6 }}>
-                      <span style={{ width:8, height:8, background:'var(--color-success)', borderRadius:'50%' }} className="animate-pulse-dot"/>
-                      Active & Configured
-                    </div>
-                    <div style={{ fontSize:'0.8rem', color:'var(--color-text-muted)', marginTop:6 }}>
-                      Poller sweeps repository commits automatically in the background.
+                  <div style={{ background:'rgba(255,255,255,0.02)', padding:18, borderRadius:12, border:`1px solid ${autoDeployEnabled ? 'var(--color-success)' : 'var(--color-border)'}`, transition:'border-color 0.3s' }}>
+                    <div style={{ fontSize:'0.75rem', color:'var(--color-text-muted)', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.05em', marginBottom:10 }}>Git Auto-Deploy</div>
+                    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+                      <div>
+                        <div style={{ fontSize:'0.9rem', fontWeight:700, color: autoDeployEnabled ? 'var(--color-success)' : 'var(--color-text-muted)', display:'flex', alignItems:'center', gap:6 }}>
+                          {autoDeployEnabled
+                            ? <><span style={{ width:8, height:8, background:'var(--color-success)', borderRadius:'50%', display:'inline-block' }} className="animate-pulse-dot"/> Enabled</>  
+                            : <><span style={{ width:8, height:8, background:'var(--color-text-muted)', borderRadius:'50%', display:'inline-block' }}/> Disabled</>
+                          }
+                        </div>
+                        <div style={{ fontSize:'0.78rem', color:'var(--color-text-muted)', marginTop:4 }}>
+                          {autoDeployEnabled
+                            ? 'Auto-deploys on every git push to this branch.'
+                            : 'Webhook calls are ignored. Deploy manually only.'}
+                        </div>
+                      </div>
+                      {/* Toggle Switch */}
+                      <button
+                        id="auto-deploy-toggle"
+                        onClick={toggleAutoDeploy}
+                        disabled={autoDeployUpdating}
+                        title={autoDeployEnabled ? 'Click to disable auto-deploy' : 'Click to enable auto-deploy'}
+                        style={{
+                          position:'relative', width:52, height:28, borderRadius:14, border:'none', cursor: autoDeployUpdating ? 'wait' : 'pointer',
+                          background: autoDeployEnabled ? 'var(--color-success)' : 'rgba(255,255,255,0.12)',
+                          transition:'background 0.25s', flexShrink:0, padding:0, outline:'none',
+                          boxShadow: autoDeployEnabled ? '0 0 10px rgba(34,197,94,0.4)' : 'none'
+                        }}
+                      >
+                        <span style={{
+                          position:'absolute', top:3, left: autoDeployEnabled ? 27 : 3,
+                          width:22, height:22, borderRadius:'50%', background:'#fff',
+                          transition:'left 0.25s', display:'block',
+                          boxShadow:'0 1px 4px rgba(0,0,0,0.3)'
+                        }}/>
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -1273,9 +1273,7 @@ export default function SupabasePage() {
           setActionMessage('Uploading SQL file, re-provisioning schema, and importing all tables and records. Please wait.')
           setActionLoading(true)
           try {
-            const { data } = await api.post(`/api/supabase/${id}/restore`, formData, {
-              headers: { 'Content-Type': 'multipart/form-data' }
-            })
+            const { data } = await api.post(`/api/supabase/${id}/restore`, formData)
             showSuccess('Database Restored', data.message || '✓ Database successfully restored!')
           } catch (err) {
             showError('Restoration Error', err.response?.data?.error || err.message)

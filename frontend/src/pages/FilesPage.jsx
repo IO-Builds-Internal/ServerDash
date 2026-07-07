@@ -182,7 +182,7 @@ export default function FilesPage({ initialPath, jailedPath }) {
       const fd = new FormData()
       fd.append('file', file)
       fd.append('path', path)
-      try { await api.post('/api/files/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } }) }
+      try { await api.post('/api/files/upload', fd) }
       catch (err) { alert(`Upload failed: ${err.response?.data?.error || err.message}`) }
     }
     setUploading(false)
