@@ -29,23 +29,51 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, Postman)
+    // Allow requests with no origin (curl, server-to-server, same-origin GETs)
     if (!origin) return cb(null, true)
-    // Allow any configured allowed origin
-    if (allowedOrigins.some(o => origin === o || origin.startsWith(o.replace(':5173', '')))) {
-      return cb(null, true)
-    }
-    // BUG-01 FIX: actually reject disallowed origins in production
+
+    try {
+      const url = new URL(origin)
+      const hostname = url.hostname
+
+      // Allow loopback / localhost
+      if (hostname === 'localhost' || hostname === '127.0.0.1') return cb(null, true)
+
+      // Allow VPS host IP or matching domain
+      if (process.env.VPS_HOST && (hostname === process.env.VPS_HOST || hostname.includes(process.env.VPS_HOST))) {
+        return cb(null, true)
+      }
+
+      // Allow wildcard DNS domains (sslip.io, nip.io)
+      if (hostname.endsWith('.sslip.io') || hostname.endsWith('.nip.io')) {
+        return cb(null, true)
+      }
+
+      // Allow any comma-separated or single domain in ALLOWED_ORIGIN
+      const configured = (process.env.ALLOWED_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean)
+      if (configured.some(c => origin === c || origin.startsWith(c) || hostname === c)) {
+        return cb(null, true)
+      }
+
+      // Check allowedOrigins list
+      if (allowedOrigins.some(o => origin === o || origin.startsWith(o.replace(/:\d+$/, '')))) {
+        return cb(null, true)
+      }
+    } catch {}
+
+    // In production, reject disallowed origins
     if (process.env.NODE_ENV === 'production') {
+      logger.warn('CORS rejected origin', { origin })
       return cb(new Error(`CORS: origin ${origin} not allowed`))
     }
+
     // In development, allow all but log a warning
     logger.warn('CORS: allowing non-listed origin in dev mode', { origin })
     cb(null, true)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }))
 
 app.use(express.json({ limit: '10mb' }))
@@ -88,6 +116,22 @@ app.get('/api/health', (req, res) => {
 const webAuthnRouter = require('./src/routes/auth-webauthn')
 app.use('/api/auth', webAuthnRouter)
 
+// Settings (persisted file store)
+const SETTINGS_FILE = path.join(__dirname, 'data', 'settings.json')
+fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true })
+
+let settings = {}
+try {
+  if (fs.existsSync(SETTINGS_FILE)) {
+    settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))
+  }
+} catch (e) {
+  logger.error('Error loading settings file', { error: e.message })
+}
+
+// GET /api/settings is public so the login screen can load branding without a 401 error
+app.get('/api/settings', (req, res) => res.json(settings))
+
 
 
 // ─── Protected Routes ──────────────────────────────────────────────────────────
@@ -126,20 +170,7 @@ app.use('/api/analytics', analyticsRouter)
 app.use('/api/processes', processesRouter)
 app.use('/api/github', githubRouter)
 
-// Settings (persisted file store)
-const SETTINGS_FILE = path.join(__dirname, 'data', 'settings.json')
-fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true })
-
-let settings = {}
-try {
-  if (fs.existsSync(SETTINGS_FILE)) {
-    settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'))
-  }
-} catch (e) {
-  logger.error('Error loading settings file', { error: e.message })
-}
-
-app.get('/api/settings', (req, res) => res.json(settings))
+// POST /api/settings/:section requires authenticated admin
 app.post('/api/settings/:section', (req, res) => {
   settings[req.params.section] = req.body
   try {

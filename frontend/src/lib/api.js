@@ -27,15 +27,12 @@ const api = axios.create({
   withCredentials: true,
 })
 
-// 401 handler: redirect to auth modal (page reload triggers the zero-flash guard)
+// 401 handler: reject error gracefully without triggering infinite reload loops
 api.interceptors.response.use(
   (res) => res,
-  async (error) => {
-    if (error.response?.status === 401) {
-      const code = error.response?.data?.code
-      if (code === 'session_expired' || error.response?.data?.error?.includes('passkey')) {
-        window.location.reload()
-      }
+  (error) => {
+    if (error.response?.status === 401 && error.response?.data?.code === 'session_expired') {
+      window.dispatchEvent(new Event('session_expired'))
     }
     return Promise.reject(error)
   }
