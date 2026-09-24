@@ -4,198 +4,218 @@
 
 <div align="center">
 
-![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)
-![Node.js](https://img.shields.io/badge/Node.js-20+-green.svg)
+![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)
+![Node.js](https://img.shields.io/badge/Node.js-22+_LTS-green.svg)
 ![React](https://img.shields.io/badge/React-19-61dafb.svg)
 ![Tailwind](https://img.shields.io/badge/Tailwind-v4-38bdf8.svg)
-![GPG Signed](https://img.shields.io/badge/Commits-GPG_Signed-success.svg)
+![Auth](https://img.shields.io/badge/Auth-Apple_Passkey_(WebAuthn)-purple.svg)
+![Security](https://img.shields.io/badge/Security-Hardened_Jail-success.svg)
 
-**A high-performance self-hosted VPS management dashboard. Manage websites, Docker containers, firewalls, analytics, backups, files, packages, and database stacks directly from a premium glassmorphic workspace.**
+**A high-performance, self-hosted VPS management dashboard. Manage websites, Docker stacks, firewalls, analytics, backups, files, packages, and services from a premium minimalist workspace protected by Apple Passkey authentication.**
 
 </div>
 
 ---
 
-## ✨ Premium Features
+## ✨ Features & Capabilities
 
-| Module | Capabilities |
-|--------|-------------|
-| **📊 Overview & Telemetry** | Real-time CPU, RAM, disk, and network throughput charts. Polled every 5 seconds, persisted to a 24-hour historical JSON store. |
-| **🌐 Websites & Nginx** | Wizard for static, Node.js (PM2-ready), and PHP (Laravel/WordPress) deployments. Configures Nginx templates, virtual directory jails, and secures endpoints using automatic Certbot Let's Encrypt SSL. |
-| **🛡️ Firewall (UFW)** | Interactive UFW management dashboard. Add, delete, and view numbered firewall rules and comments. Toggle firewall status safely with port-22 recovery locks. |
-| **📈 Web Analytics Suite** | Real-time Nginx log parsing and TCP socket tracking. Render active visitors, unique IPs, referrers, browser distributions, and local **GeoIP2 Geolocation flags** on interactive charts. |
-| **📦 Snapshots & Self-Healing Backups** | High-speed, optimized backups using size-excluding `rsync`. Includes disk space usage meters, automated snapshot cleanups, and a 5-minute fault-tolerant restore queue with automatic MySQL and PM2 auto-revival. |
-| **🐳 Docker Apps** | Container grid showing real-time CPU/RAM limits, image/compose deployments, interactive lifecycle controls (start/stop/restart/delete stack), and live server-sent event (SSE) log streams. |
-| **⚡ Software Runtimes Center** | Displays current local runtimes (Node.js, Docker, Nginx, MariaDB) alongside upstream updates, with direct full-stream APT update/upgrade terminal controls. |
-| **📂 File Manager** | Browse the filesystem with safe path bounds. Multi-file uploads/downloads, directory creation, recursive folder deletions, and Monaco code editing. |
-| **📧 SMTP & Postfix Mail** | Test mail deliveries, inspect virtual mailbox allocations, view virtual postfix maillogs, and configure global Postfix relays. |
+| Module | Description |
+| :--- | :--- |
+| **🔑 Apple Passkey Auth** | Passwordless biometric authentication using FIDO2 / WebAuthn. Stores credentials natively in **Apple iCloud Keychain** with **Touch ID / Face ID**. Zero-flash CSS containment and single-admin permanent registration lockout. |
+| **🎨 4 Minimalist Themes** | Handcrafted, distraction-free color palettes: **Obsidian** (Pure AMOLED), **Slate** (Deep Indigo Gray), **Zinc** (Industrial Technical), and **Titanium** (Warm Metallic Steel). Persisted in localStorage. |
+| **📊 Overview & Telemetry** | Real-time CPU, RAM, NVMe disk, and network throughput telemetry with historical sparklines, process table, and core utilization visualizers. |
+| **🌐 Websites & Nginx** | Deploy Node.js (PM2), static HTML/JS, or PHP (WordPress/Laravel) applications with automatic virtual host configuration and automated Let's Encrypt SSL via Certbot. |
+| **🛡️ Firewall (UFW)** | Interactive UFW firewall manager. Add, toggle, and delete rules with strict port/IP sanitization and safe port-22 recovery guards. |
+| **📂 Filesystem Security Jail** | File manager with multi-root allowed jailing (`/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, `/tmp`). Features symlink traversal dereferencing and native Node.js filesystem operations. |
+| **🐳 Docker Apps & Compose** | Container management dashboard showing real-time CPU/RAM limits, lifecycle operations (start/stop/restart/remove), Docker Compose stacks, and live SSE log streams. |
+| **📦 Snapshots & Backups** | High-speed VPS snapshots with `rsync` exclusion, storage gauges, automatic cleanup, and one-click full server restoration (Nginx + www + MySQL). |
+| **⚡ Software Runtimes** | Monitor installed system runtimes (Node.js, Docker, Nginx, MariaDB), check upstream updates, and stream live command executions. |
+| **📧 SMTP & Postfix Mail** | Inspect virtual mailbox allocations, view Postfix mail queues and logs, create system mail users, and test email deliveries. |
+| **🗄️ FTP Management** | Built-in `vsftpd` controller with secure chroot directory binding, user account provisioning, and `/usr/sbin/nologin` shell lockdowns. |
+| **📈 Web Analytics Suite** | Real-time Nginx access log parsing with active visitor tracking, referrers, browser breakdown, and **GeoIP2 country flags**. |
+| **🐙 GitHub CI/CD** | Automated deployment webhooks with HMAC-SHA256 signature verification and AES-256-GCM encrypted OAuth tokens. |
+| **💾 Swap Memory Manager** | Reconfigure system swap files (0–32 GB) on the fly with persistent `/etc/fstab` synchronization. |
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-                 ┌─────────────────────┐
-                 │   Browser (React)   │
-                 │   Vite + Tailwind   │
-                 │  Auth: Local JWT    │
-                 └──────────┬──────────┘
-                            │ HTTPS + JWT (Port 4001)
-                 ┌──────────▼──────────┐
-                 │  Express Backend    │
-                 │  Node.js (Direct)   │
-                 │  Dockerode + UFW    │
-                 └──────────┬──────────┘
-                            │ Direct Local Shell Exec
-                 ┌──────────▼──────────┐
-                 │  Your Local VPS     │
-                 │  (Ubuntu / Debian)  │
-                 └─────────────────────┘
+                      BROWSER (Safari / Chrome)
+               Touch ID / Face ID / iCloud Keychain
+                                │
+                                │ HTTPS (Port 443)
+                                ▼
+                     NGINX REVERSE PROXY
+                  Let's Encrypt SSL Gateway
+                                │
+        ┌───────────────────────┴───────────────────────┐
+        ▼                                               ▼
+Static Frontend SPA                            Express Backend API
+/var/www/serverdash/dist                      Node 22 LTS (Port 4001)
+React 19 + Vite 8 + CSS Variables              PM2 Daemon / Systemd
+                                                        │
+                                                        ▼
+                                               SQLite Vault (auth.db)
+                                              • Admin Passkey Credential
+                                              • httpOnly Session Tokens
 ```
-
----
-
-## 🖥️ Visual Interface Preview
-
-ServerDash features a stunning, state-of-the-art glassmorphic dark-mode user interface designed to maximize accessibility and administrative clarity:
-
-### 🛡️ Dashboard Gateway & Authentication
-A secure, timing-safe cryptographically protected login gateway guarding all administrative API interfaces.
-![ServerDash Login Gateway](./assets/dashboard_login.png)
-
-### 📊 Real-Time Server Observability Overview
-A clean, premium workspace rendering CPU, Memory, Disk, and Network telemetry alongside process tracking and dynamic metrics.
-![ServerDash System Overview](./assets/dashboard_overview.png)
 
 ---
 
 ## ⚡ Quick Start & Deployment
 
-### 🚀 The One-Command Automated Installer (Highly Recommended)
-If you are setting up ServerDash on a **freshly formatted VPS** (running Ubuntu 20.04/22.04/24.04 or Debian 11/12), you can run our production-ready, fully automated one-line installer. 
+### 🚀 Automated One-Line Installer (Recommended)
 
-This script automatically provisions all OS libraries, configures reverse-proxy Nginx servers, sets up Node/PM2 runtimes, configures firewalls, generates secure credentials, and outputs a beautiful login credentials summary dashboard!
-
-To begin, simply execute the following command:
+Run the automated installer on a clean Ubuntu (20.04 / 22.04 / 24.04) or Debian (11 / 12) VPS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/IO-Builds-Internal/ServerDash/main/install.sh | bash
 ```
 
+The script will automatically:
+1. Detect public IP and install core tools (`nginx`, `curl`, `git`, `ufw`, `certbot`).
+2. Install **Node.js v22 LTS** and **PM2**.
+3. Clone and configure ServerDash.
+4. Build the frontend and configure the Nginx reverse-proxy.
+5. Launch the backend under PM2 with systemd auto-start.
+
 ---
 
-### 🛠️ Manual Configuration & Development
+### 🛠️ Manual Installation & Development
 
-If you prefer to configure and run the services manually, follow these standard steps:
-
-#### 1. Clone & Configure
+#### 1. Clone Repository
 ```bash
 git clone https://github.com/IO-Builds-Internal/ServerDash.git
 cd ServerDash
 ```
 
-#### 2. Install Dependencies
+#### 2. Backend Setup
 ```bash
-# Install backend dependencies
-cd backend && npm install
+cd backend
+npm install
 
-# Install frontend dependencies
-cd ../frontend && npm install
+# Create environment configuration
+cat <<EOF > .env
+PORT=4001
+NODE_ENV=production
+COOKIE_SECRET=$(openssl rand -hex 32)
+ALLOW_PASSKEY_RESET=false
+VPS_HOST=your-server-ip
+EOF
+
+# Start backend
+npm run dev
 ```
 
-#### 3. Start Local Development
+#### 3. Frontend Setup
 ```bash
-# Terminal 1 — Launch Backend Service
-cd backend && npm run dev
+cd ../frontend
+npm install
 
-# Terminal 2 — Launch Frontend Interface
-cd frontend && npm run dev
+# Start development server
+npm run dev
+
+# Or build for production
+npm run build
 ```
 
-***
+---
 
 ## 🔧 Environment Variables
-
-### Frontend (`frontend/.env`)
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `VITE_API_URL` | ✅ | Backend API URL (e.g. `http://<vps-ip>:4001`) |
 
 ### Backend (`backend/.env`)
 
 | Variable | Required | Description |
-|----------|----------|-------------|
-| `ADMIN_EMAIL` | ✅ | Panel Admin Email (default: `admin@serverdash.local`) |
-| `ADMIN_PASSWORD` | ✅ | Panel Admin Password (default: `ServerDash2026!`) |
-| `LOCAL_JWT_SECRET` | ✅ | Secret key for signing dashboard session JWTs |
-| `LOCAL_JWT_EXPIRES` | ❌ | Token expiration time (default: `8h`) |
-| `PORT` | ❌ | Backend port (default: `4001`) |
-| `ALLOWED_ORIGIN` | ❌ | Frontend domain URL allowed for CORS |
+| :--- | :---: | :--- |
+| `PORT` | ❌ | Backend listening port (default: `4001`). |
+| `NODE_ENV` | ✅ | Set to `production` or `development`. |
+| `COOKIE_SECRET` | ✅ | Cryptographic secret for signing session cookies (`openssl rand -hex 32`). |
+| `VPS_HOST` | ✅ | Server IP or primary domain for CORS and WebAuthn RP ID resolution. |
+| `ALLOW_PASSKEY_RESET` | ❌ | Emergency reset flag (`true`/`false`). Default is `false`. |
+| `ALLOWED_ORIGIN` | ❌ | Additional comma-separated origins allowed for CORS. |
+| `GITHUB_CLIENT_ID` | ❌ | Optional GitHub OAuth client ID for repository browsing. |
 
-***
+### Frontend (`frontend/.env`)
+
+| Variable | Required | Description |
+| :--- | :---: | :--- |
+| `VITE_API_URL` | ❌ | Backend API base URL. Leave empty (`""`) in production for relative reverse-proxy routing. |
+
+---
 
 ## 📁 Project Structure
 
 ```
 ServerDash/
-├── frontend/                   # React 19 + Vite 8 + Tailwind v4
+├── frontend/                   # React 19 + Vite 8
 │   ├── src/
-│   │   ├── pages/              # Clean dashboards & views
-│   │   │   ├── LoginPage.jsx
-│   │   │   ├── OverviewPage.jsx
-│   │   │   ├── WebsitesPage.jsx
-│   │   │   ├── FilesPage.jsx
-│   │   │   ├── DockerPage.jsx
-│   │   │   ├── PackagesPage.jsx
-│   │   │   ├── SupabasePage.jsx
-│   │   │   ├── FirewallShieldPage.jsx  # Host firewall rules
-│   │   │   ├── SnapshotsPage.jsx       # Dynamic server backup engine
-│   │   │   ├── AnalyticsPage.jsx       # real-time GeoIP analytics
-│   │   │   └── SettingsPage.jsx
-│   │   ├── components/
-│   │   │   ├── Sidebar.jsx     # Nav controls
-│   │   │   └── ProtectedRoute.jsx
-│   │   ├── contexts/
-│   │   │   └── AuthContext.jsx # Local JWT auth client
-│   │   ├── lib/
-│   │   │   └── api.js          # Axios client with JWT headers
-│   │   └── index.css           # Premium Tailwind variables
+│   │   ├── components/         # Reusable UI components
+│   │   │   ├── PasskeyAuthModal.jsx   # Apple Passkey setup & login modal
+│   │   │   ├── ThemeSwitcher.jsx      # Minimalist theme selector
+│   │   │   └── Sidebar.jsx            # Navigation controls
+│   │   ├── contexts/           # React state contexts
+│   │   │   ├── AuthContext.jsx        # Passkey cookie session state
+│   │   │   ├── ThemeContext.jsx       # 4-theme styling provider
+│   │   │   └── BrandingContext.jsx    # Custom panel branding
+│   │   ├── pages/              # Panel views
+│   │   │   ├── OverviewPage.jsx       # Real-time telemetry dashboard
+│   │   │   ├── WebsitesPage.jsx       # Nginx site manager
+│   │   │   ├── FilesPage.jsx          # Jailed file manager
+│   │   │   ├── DockerPage.jsx         # Docker containers & compose
+│   │   │   ├── FirewallShieldPage.jsx # UFW rules controller
+│   │   │   ├── SnapshotsPage.jsx      # Full server backups
+│   │   │   ├── PackagesPage.jsx       # Software runtimes & APT
+│   │   │   ├── SmtpPage.jsx           # Postfix mail manager
+│   │   │   ├── FtpPage.jsx            # vsftpd user manager
+│   │   │   └── AnalyticsPage.jsx      # Nginx GeoIP visitor metrics
+│   │   ├── lib/api.js          # Axios client with credentials
+│   │   └── index.css           # CSS variables & theme design tokens
 │
-├── backend/                    # Node.js + Express 5 API
+├── backend/                    # Node.js 22 + Express 5 API
 │   ├── src/
 │   │   ├── routes/
-│   │   │   ├── metrics.js      # Proc telemetry & hist store
-│   │   │   ├── sites.js        # Nginx config wizards & certbot
-│   │   │   ├── docker.js       # Container streams & stack management
-│   │   │   ├── packages.js     # APT packages & upgrades
-│   │   │   ├── files.js        # File system operations
-│   │   │   ├── firewall.js     # UFW rules controller
-│   │   │   ├── analytics.js    # Nginx Weblogs parser & TCP sockets
-│   │   │   ├── snapshots.js    # Optimized backup rsync queue
-│   │   │   └── supabase.js     # Supabase stack installer
-│   │   ├── authMiddleware.js   # JWT token validator
-│   │   └── logger.js           # Winston logger
-│   └── server.js               # Express app entry
+│   │   │   ├── auth-webauthn.js # Apple Passkey WebAuthn & SQLite store
+│   │   │   ├── metrics.js      # System telemetry sensors
+│   │   │   ├── sites.js        # Nginx vhosts & Certbot SSL
+│   │   │   ├── docker.js       # Dockerode socket integration
+│   │   │   ├── files.js        # Jailed filesystem operations
+│   │   │   ├── firewall.js     # UFW rule controller
+│   │   │   ├── snapshots.js    # Backup & restore engine
+│   │   │   ├── packages.js     # APT packages & streaming console
+│   │   │   ├── smtp.js         # Postfix & mailbox manager
+│   │   │   ├── ftp.js          # vsftpd user controller
+│   │   │   ├── analytics.js    # Nginx weblog analyzer
+│   │   │   └── github.js       # Encrypted GitHub integration
+│   │   ├── authMiddleware.js   # Session cookie validator
+│   │   └── logger.js           # Winston structured logger
+│   ├── data/                   # SQLite database (auth.db) & settings
+│   └── server.js               # Application entry point & CORS
+│
+├── install.sh                  # Automated production installer
+└── start.sh                    # Development start script
 ```
 
 ---
 
-## 🔒 Security Posture
+## 🔒 Security Architecture
 
-* **Session Tokens**: All API routes require cryptographically secure HS256 JWT tokens.
-* **Timing-Safe Login**: Uses Buffer-level `crypto.timingSafeEqual` comparisons during login authentication to prevent side-channel leaks.
-* **Rate Limiting**: Integrated `express-rate-limit` allowing `120` req/min for general API calls and a tight `10` req/min limit on console shell execution.
-* **Safe Terminal Streaming**: Packages & command console execution streams use a restricted danger-pattern regex blocker to mitigate malicious host shell scripts.
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit changes: `git commit -S -m 'Add my feature'` (Remember to sign your commits!)
-4. Push and open a Pull Request
+1. **Apple Passkeys & WebAuthn:**
+   - Platform authenticator required (`authenticatorAttachment: "platform"`).
+   - Touch ID / Face ID hardware-bound authentication stored in iCloud Keychain.
+   - Replay protection with strict `sign_count` tracking.
+   - **Single-Admin Lockout:** The first registration permanently locks the endpoint (`403 Forbidden`).
+2. **Session Security:**
+   - 256-bit cryptographically secure session tokens stored in SQLite (`admin_sessions`).
+   - Cookies configured with `httpOnly`, `SameSite=Lax`, and `Secure` (in production).
+3. **Filesystem Jail:**
+   - Restricted strictly to `/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, and `/tmp`.
+   - Resolves symlinks via `fs.realpathSync()` to block directory traversal into `/etc/shadow`, `/root/.ssh`, or system files.
+   - Uses native Node.js filesystem calls (`fs.rmSync`, `fs.cpSync`) instead of shell string interpolation.
+4. **CORS Enforcement:**
+   - Wildcard DNS support (`*.sslip.io`, `*.nip.io`) and host validation. Unlisted external origins are rejected with errors.
+5. **Rate Limiting:**
+   - Global rate limiter (120 req/min) and dedicated console execution limiter (10 req/min).
 
 ---
 
