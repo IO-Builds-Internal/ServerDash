@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { useBranding } from '../contexts/BrandingContext'
 import { useTheme } from '../contexts/ThemeContext'
+import ThemeSwitcher from './ThemeSwitcher'
 
 const navItems = [
   { path: '/overview', icon: LayoutDashboard, label: 'Overview' },
@@ -182,33 +183,46 @@ export default function Sidebar({ connected = true }) {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
-              flex: 1
-            }}>
-              {user?.email ?? 'Demo Mode'}
-            </div>
-          )}
-          <button
-            onClick={toggleTheme}
-            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            style={{
+              flex: 1,
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 8,
-              background: 'rgba(255, 255, 255, 0.03)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-text-muted)',
-              cursor: 'pointer',
-              transition: 'all 0.15s',
-              flexShrink: 0
-            }}
-            onMouseEnter={e => { e.currentTarget.style.color = 'var(--color-primary)'; e.currentTarget.style.background = 'rgba(99, 102, 241, 0.15)' }}
-            onMouseLeave={e => { e.currentTarget.style.color = 'var(--color-text-muted)'; e.currentTarget.style.background = 'rgba(255, 255, 255, 0.03)' }}
-          >
-            {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-          </button>
+              gap: 6
+            }}>
+              <span style={{
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'var(--color-success)',
+                boxShadow: '0 0 6px var(--color-success)',
+                display: 'inline-block'
+              }} />
+              <span>Admin (Passkey)</span>
+            </div>
+          )}
+          {!collapsed ? (
+            <ThemeSwitcher />
+          ) : (
+            <button
+              onClick={toggleTheme}
+              title="Cycle Theme"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 28,
+                height: 28,
+                borderRadius: 8,
+                background: 'var(--color-surface-2)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-muted)',
+                cursor: 'pointer',
+                transition: 'all 0.15s',
+                flexShrink: 0
+              }}
+            >
+              <div style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--color-primary)' }} />
+            </button>
+          )}
         </div>
         <button
           onClick={handleSignOut}

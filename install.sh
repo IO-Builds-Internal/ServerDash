@@ -72,25 +72,22 @@ if [ ! -d "$SD_DIR" ]; then
   git clone https://github.com/iobuilds/ServerDash.git "$SD_DIR"
 fi
 
-# 7. Generate Secure Admin Credentials & Config
-echo -e "\n🔒 Generating secure credentials and configuration..."
-ADMIN_EMAIL="admin@serverdash.io"
-ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -d '/+=')
-JWT_SECRET=$(openssl rand -hex 32)
+# 7. Generate Secure Passkey Configuration
+echo -e "\n🔒 Generating secure cookie session configuration..."
+COOKIE_SECRET=$(openssl rand -hex 32)
 
 # Write Backend Environment Config
 cat <<EOF > "$SD_DIR/backend/.env"
 PORT=4001
-ADMIN_EMAIL=$ADMIN_EMAIL
-ADMIN_PASSWORD=$ADMIN_PASSWORD
-LOCAL_JWT_SECRET=$JWT_SECRET
-LOCAL_JWT_EXPIRES=8h
-VITE_API_URL=http://$IP_ADDRESS
+NODE_ENV=production
+COOKIE_SECRET=$COOKIE_SECRET
+ALLOW_PASSKEY_RESET=false
+ALLOWED_ORIGIN=http://$IP_ADDRESS
 EOF
 
 # Write Frontend Environment Config (for compilation build bindings)
 cat <<EOF > "$SD_DIR/frontend/.env"
-VITE_API_URL=http://$IP_ADDRESS
+VITE_API_URL=
 EOF
 
 # 8. Install & Build Backend
@@ -134,6 +131,10 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
         proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_cache_bypass $http_upgrade;
         
         # Disable buffering for real-time SSE logs
@@ -182,12 +183,12 @@ echo "    🎉 SERVERDASH PANEL INSTALLED SUCCESSFULLY! 🎉"
 echo "==========================================================\e[0m"
 echo ""
 echo -e "🌐 \e[1mPanel Access URL\e[0m:  \e[36mhttp://$IP_ADDRESS\e[0m"
-echo -e "📧 \e[1mAdmin Username\e[0m:    \e[36m$ADMIN_EMAIL\e[0m"
-echo -e "🔑 \e[1mAdmin Password\e[0m:    \e[33m$ADMIN_PASSWORD\e[0m"
+echo -e "🔑 \e[1mAuthentication\e[0m:    \e[32mApple Passkey (Touch ID / Face ID / iCloud Keychain)\e[0m"
 echo ""
 echo "----------------------------------------------------------"
-echo -e "🛡️ \e[95mSecurity Note\e[0m: Store these credentials safely! You can"
-echo "   change them or update branding logos anytime via Settings."
+echo -e "🛡️ \e[95mPasskey Setup Note\e[0m: Open the Panel Access URL in Safari on"
+echo "   your Mac, iPhone, or iPad to register your primary Passkey."
+echo "   Subsequent logins are unlocked via Touch ID or Face ID."
 echo "----------------------------------------------------------"
 echo -e "⚙️  \e[1mPM2 Utility Commands\e[0m:"
 echo "   - View status:  pm2 status"

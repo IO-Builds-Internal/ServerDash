@@ -1,6 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const { exec, spawn } = require('child_process')
+const crypto = require('crypto')
 const { promisify } = require('util')
 const originalExecAsync = promisify(exec)
 
@@ -17,6 +18,7 @@ const getCleanEnv = (customEnv = {}) => {
     'POSTGRES_DB',
     'JWT_SECRET',
     'JWT_JWKS',
+    'COOKIE_SECRET',
     'PORT'
   ]
   sensitiveKeys.forEach(k => delete env[k])
@@ -26,6 +28,27 @@ const getCleanEnv = (customEnv = {}) => {
 const execAsync = (command, options = {}) => {
   const env = getCleanEnv(options.env)
   return originalExecAsync(command, { ...options, env })
+}
+
+// ── BUG-03 FIX: In-memory port reservation set with TTL ─────────────────────
+// Prevents two concurrent deploys from racing to claim the same free port.
+const _reservedPorts = new Map() // port -> reservedAt timestamp
+const PORT_RESERVATION_TTL = 60000 // 60 seconds
+
+function reservePort(port) {
+  _reservedPorts.set(port, Date.now())
+}
+function releasePort(port) {
+  _reservedPorts.delete(port)
+}
+function isPortReserved(port) {
+  const at = _reservedPorts.get(port)
+  if (!at) return false
+  if (Date.now() - at > PORT_RESERVATION_TTL) {
+    _reservedPorts.delete(port)
+    return false
+  }
+  return true
 }
 
 const fs = require('fs')
@@ -47,11 +70,7 @@ const cleanDomain = (value) => String(value || '').trim().toLowerCase().replace(
 const cleanName = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
 
 function getCentralMetaPath(domain, localRoot) {
-  if (domain === 'bbjdemo.iobuilds.com') {
-    const dir = path.join(__dirname, '..', '..', 'data', 'sites_metadata')
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
-    return path.join(dir, `${domain}.json`)
-  }
+  // BUG-06 FIX: removed hardcoded bbjdemo.iobuilds.com special-case
   return path.join(localRoot, '.serverdash.json')
 }
 
@@ -105,12 +124,30 @@ function detectIsSpa(pkgJson, nodeStartCommand, nodeSubtype) {
     const deps = { ...pkgJson.dependencies, ...pkgJson.devDependencies }
     const hasVite = !!deps.vite || !!(pkgJson.scripts?.dev || '').includes('vite')
     const hasCra  = !!deps['react-scripts'] || !!(pkgJson.scripts?.start || '').includes('react-scripts')
-    const hasNextStatic = !!deps.next && !((pkgJson.scripts?.start || '').includes('next start'))
+    // BUG-07 FIX: Next.js is only static-exportable if next.config has output:'export'
+    // or an explicit 'export' script exists. Don't guess based on start script.
+    const hasNextExport = !!deps.next && (
+      !!(pkgJson.scripts?.export) ||
+      // Try to detect output:'export' in next.config.js/ts/mjs by reading the file
+      (() => {
+        try {
+          const nextConfigs = ['next.config.js', 'next.config.ts', 'next.config.mjs']
+          for (const cf of nextConfigs) {
+            const fullPath = require('path').resolve(cf)
+            if (require('fs').existsSync(fullPath)) {
+              const content = require('fs').readFileSync(fullPath, 'utf8')
+              if (content.includes("output: 'export'") || content.includes('output: "export"')) return true
+            }
+          }
+        } catch {}
+        return false
+      })()
+    )
     const hasNoStart = !pkgJson.scripts?.start
     const startIsFrontend = pkgJson.scripts?.start &&
       (pkgJson.scripts.start.includes('vite') || pkgJson.scripts.start.includes('react-scripts'))
     const noUserStartCmd = !(nodeStartCommand && nodeStartCommand.trim())
-    return (hasVite || hasCra || hasNextStatic) && (hasNoStart || startIsFrontend) && noUserStartCmd
+    return (hasVite || hasCra || hasNextExport) && (hasNoStart || startIsFrontend) && noUserStartCmd
   } catch {
     return false
   }
@@ -324,14 +361,15 @@ router.get('/node-versions', async (req, res) => {
   }
 })
 
-// ── GET /api/sites/suggest-port — suggest next available port ─────────────────
+// ── GET /api/sites/suggest-port — suggest next available port (BUG-03 FIX) ───────────
 router.get('/suggest-port', async (req, res) => {
   const start = parseInt(req.query.start || '3000')
   try {
-    const { stdout } = await execAsync("ss -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | grep -oP ':\\K[0-9]+'")
+    const { stdout } = await execAsync("ss -tlnp 2>/dev/null | awk '/LISTEN/ {print $4}' | awk -F: '{print $NF}'")
     const used = new Set(stdout.split('\n').filter(Boolean).map(Number))
     let p = start
-    while (used.has(p) && p < 65000) p++
+    // Also skip in-memory reserved ports (prevents race between concurrent deploys)
+    while ((used.has(p) || isPortReserved(p)) && p < 65000) p++
     res.json({ port: p, used: [...used].sort((a,b) => a-b) })
   } catch {
     res.json({ port: start, used: [] })
@@ -939,24 +977,24 @@ router.post('/:id/deploy', async (req, res) => {
     if (fs.existsSync(path.join(root, '.git'))) {
       // Auto-inject stored GitHub token if available for this repo
       try {
-        const { stdout: remoteUrl } = await execAsync(`cd "${root}" && git remote get-url origin 2>/dev/null || true`)
+        const { stdout: remoteUrl } = await execAsync(`cd ${shellQuote(root)} && git remote get-url origin 2>/dev/null || true`)
         const gitRemote = remoteUrl.trim()
         const storedToken = getStoredGithubToken(gitRemote)
         if (storedToken && gitRemote && gitRemote.includes('github.com')) {
           const u = new URL(gitRemote.replace(/^git@github\.com:/, 'https://github.com/').replace(/:(\w)/, '/$1'))
           u.username = 'oauth2'; u.password = storedToken
-          await execAsync(`cd "${root}" && git remote set-url origin ${shellQuote(u.toString())} 2>&1`)
+          await execAsync(`cd ${shellQuote(root)} && git remote set-url origin ${shellQuote(u.toString())} 2>&1`)
         }
       } catch {}
 
       if (commitHash) {
         send(`Restoring / Rolling back to commit ${commitHash}…`)
-        await execAsync(`cd "${root}" && git fetch origin 2>&1 || true`)
-        const { stdout: resetOut } = await execAsync(`cd "${root}" && git reset --hard ${shellQuote(commitHash)} 2>&1`)
+        await execAsync(`cd ${shellQuote(root)} && git fetch origin 2>&1 || true`)
+        const { stdout: resetOut } = await execAsync(`cd ${shellQuote(root)} && git reset --hard ${shellQuote(commitHash)} 2>&1`)
         resetOut.split('\n').filter(Boolean).forEach(l => send(l))
       } else {
         send('git pull…')
-        const { stdout: gitOut } = await execAsync(`cd "${root}" && git pull 2>&1`)
+        const { stdout: gitOut } = await execAsync(`cd ${shellQuote(root)} && git pull 2>&1`)
         gitOut.split('\n').filter(Boolean).forEach(l => send(l))
       }
     }
@@ -998,12 +1036,12 @@ router.post('/:id/deploy', async (req, res) => {
     if (fs.existsSync(path.join(root, 'package.json'))) {
       if (installCmd && installCmd.trim()) {
         send(`${installCmd}…`)
-        await execAsync(`cd "${root}" && ${prefix}${installCmd} 2>&1`)
+        await execAsync(`cd ${shellQuote(root)} && ${prefix}${installCmd} 2>&1`)
       }
       if (buildCmd && buildCmd.trim()) {
         send(`${buildCmd}…`)
         try {
-          await execAsync(`cd "${root}" && ${prefix}${buildCmd} 2>&1`)
+          await execAsync(`cd ${shellQuote(root)} && ${prefix}${buildCmd} 2>&1`)
           send('✓ Build complete')
         } catch (e) {
           send(`✗ Build failed: ${e.message}`)
@@ -1020,7 +1058,7 @@ router.post('/:id/deploy', async (req, res) => {
       if (restartCmd && restartCmd.trim()) {
         try {
           send(`Restarting application: ${restartCmd}…`)
-          const { stdout: restartOut } = await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+          const { stdout: restartOut } = await execAsync(`cd ${shellQuote(root)} && ${prefix}${restartCmd} 2>&1`)
           restartOut.split('\n').filter(Boolean).forEach(l => send(l))
           send('✓ Application restarted')
         } catch (e) {
@@ -1078,6 +1116,41 @@ router.post('/:id/webhook', async (req, res) => {
 
     const root = site.root || `/var/www/${site.domain}`
 
+    // BUG-16 FIX: Verify webhook HMAC secret if configured before triggering deploy
+    let webhookSecret = null
+    const metaPathCheck = getCentralMetaPath(site.domain, root)
+    if (fs.existsSync(metaPathCheck)) {
+      try {
+        const metaCheck = JSON.parse(fs.readFileSync(metaPathCheck, 'utf8'))
+        if (metaCheck.autoDeployEnabled === false) {
+          logger.info(`[${site.domain}] Auto-deploy is disabled. Skipping webhook deployment.`)
+          return res.status(200).json({ message: 'Auto-deploy disabled for site' })
+        }
+        if (metaCheck.webhookSecret) webhookSecret = metaCheck.webhookSecret
+      } catch (e) {}
+    }
+
+    if (webhookSecret) {
+      const sig = req.headers['x-hub-signature-256'] || req.headers['x-gitlab-token']
+      if (!sig) {
+        logger.warn(`[${site.domain}] Webhook rejected: missing signature header`)
+        return res.status(401).json({ error: 'Missing webhook signature header' })
+      }
+      if (sig.startsWith('sha256=')) {
+        const hmac = crypto.createHmac('sha256', webhookSecret)
+        const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex')
+        const sigBuf = Buffer.from(sig)
+        const digBuf = Buffer.from(digest)
+        if (sigBuf.length !== digBuf.length || !crypto.timingSafeEqual(sigBuf, digBuf)) {
+          logger.warn(`[${site.domain}] Webhook rejected: invalid HMAC signature`)
+          return res.status(401).json({ error: 'Invalid webhook signature' })
+        }
+      } else if (sig !== webhookSecret) {
+        logger.warn(`[${site.domain}] Webhook rejected: invalid secret token`)
+        return res.status(401).json({ error: 'Invalid webhook token' })
+      }
+    }
+
     // Return 202 Accepted immediately so GitHub doesn't timeout
     res.status(202).json({ message: 'Webhook received. Deployment triggered.' })
 
@@ -1086,21 +1159,9 @@ router.post('/:id/webhook', async (req, res) => {
       try {
         logger.info(`Webhook triggered deployment for ${site.domain}`)
 
-        // Check if auto-deploy is disabled for this site
-        const metaPathCheck = getCentralMetaPath(site.domain, root)
-        if (fs.existsSync(metaPathCheck)) {
-          try {
-            const metaCheck = JSON.parse(fs.readFileSync(metaPathCheck, 'utf8'))
-            if (metaCheck.autoDeployEnabled === false) {
-              logger.info(`[${site.domain}] Auto-deploy is disabled. Skipping webhook deployment.`)
-              return
-            }
-          } catch (e) {}
-        }
-
         if (fs.existsSync(path.join(root, '.git'))) {
           logger.info(`[${site.domain}] git pull...`)
-          await execAsync(`cd "${root}" && git pull 2>&1`)
+          await execAsync(`cd ${shellQuote(root)} && git pull 2>&1`)
         } else {
           logger.warn(`[${site.domain}] Webhook received but no .git directory found.`)
           return
@@ -1143,11 +1204,11 @@ router.post('/:id/webhook', async (req, res) => {
         if (fs.existsSync(path.join(root, 'package.json'))) {
           if (installCmd && installCmd.trim()) {
             logger.info(`[${site.domain}] ${installCmd}...`)
-            await execAsync(`cd "${root}" && ${prefix}${installCmd} 2>&1`)
+            await execAsync(`cd ${shellQuote(root)} && ${prefix}${installCmd} 2>&1`)
           }
           if (buildCmd && buildCmd.trim()) {
             logger.info(`[${site.domain}] ${buildCmd}...`)
-            await execAsync(`cd "${root}" && ${prefix}${buildCmd} 2>&1`)
+            await execAsync(`cd ${shellQuote(root)} && ${prefix}${buildCmd} 2>&1`)
           }
         }
 
@@ -1158,7 +1219,7 @@ router.post('/:id/webhook', async (req, res) => {
           }
           if (restartCmd && restartCmd.trim()) {
             logger.info(`[${site.domain}] ${restartCmd}...`)
-            await execAsync(`cd "${root}" && ${prefix}${restartCmd} 2>&1`)
+            await execAsync(`cd ${shellQuote(root)} && ${prefix}${restartCmd} 2>&1`)
           }
         } else {
           logger.info(`[${site.domain}] PM2 process not found. Running self-healing startup...`)
@@ -1363,21 +1424,21 @@ router.get('/:id/git', async (req, res) => {
     let repoUrl = ''
     let branch = 'main'
     try {
-      const { stdout: urlOut } = await execAsync(`cd "${root}" && git config --get remote.origin.url || true`)
+      const { stdout: urlOut } = await execAsync(`cd ${shellQuote(root)} && git config --get remote.origin.url || true`)
       repoUrl = urlOut.trim()
-      const { stdout: branchOut } = await execAsync(`cd "${root}" && git branch --show-current || true`)
+      const { stdout: branchOut } = await execAsync(`cd ${shellQuote(root)} && git branch --show-current || true`)
       branch = branchOut.trim()
     } catch (e) {}
 
     let lastCommit = null
     let commits = []
     try {
-      const { stdout: commitOut } = await execAsync(`cd "${root}" && git log -1 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
+      const { stdout: commitOut } = await execAsync(`cd ${shellQuote(root)} && git log -1 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
       if (commitOut.trim()) {
         const [hash, author, email, date, subject] = commitOut.trim().split('|')
         lastCommit = { hash, author, email, date, subject }
       }
-      const { stdout: commitsOut } = await execAsync(`cd "${root}" && git log -20 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
+      const { stdout: commitsOut } = await execAsync(`cd ${shellQuote(root)} && git log -20 --format="%h|%an|%ae|%ad|%s" --date=relative || true`)
       if (commitsOut.trim()) {
         commits = commitsOut.trim().split('\n').filter(Boolean).map(line => {
           const [hash, author, email, date, subject] = line.split('|')
@@ -1388,8 +1449,8 @@ router.get('/:id/git', async (req, res) => {
 
     let behindCount = 0
     try {
-      await execAsync(`cd "${root}" && git fetch origin 2>/dev/null || true`, { timeout: 10000 })
-      const { stdout: behindOut } = await execAsync(`cd "${root}" && git rev-list HEAD..origin/${branch} --count || true`)
+      await execAsync(`cd ${shellQuote(root)} && git fetch origin 2>/dev/null || true`, { timeout: 10000 })
+      const { stdout: behindOut } = await execAsync(`cd ${shellQuote(root)} && git rev-list HEAD..origin/${branch} --count || true`)
       behindCount = parseInt(behindOut.trim()) || 0
     } catch (e) {}
 
@@ -1498,6 +1559,31 @@ router.post('/:id/ssl', async (req, res) => {
 
 
 // ── DELETE /api/sites/:id ──────────────────────────────────────────────────────
+
+// BUG-04 FIX: Purge dangling symlinks from nginx sites-enabled
+function purgeDanglingNginxSymlinks() {
+  try {
+    const enabledDir = '/etc/nginx/sites-enabled'
+    if (!fs.existsSync(enabledDir)) return
+    for (const entry of fs.readdirSync(enabledDir)) {
+      const full = path.join(enabledDir, entry)
+      try {
+        const lstat = fs.lstatSync(full)
+        if (lstat.isSymbolicLink()) {
+          const target = fs.readlinkSync(full)
+          const resolved = path.isAbsolute(target) ? target : path.join(enabledDir, target)
+          if (!fs.existsSync(resolved)) {
+            fs.unlinkSync(full)
+            logger.info('Purged dangling nginx symlink', { symlink: full, target: resolved })
+          }
+        }
+      } catch {}
+    }
+  } catch (e) {
+    logger.warn('Could not scan sites-enabled for dangling symlinks', { error: e.message })
+  }
+}
+
 router.delete('/:id', async (req, res) => {
   const { id } = req.params
   const deleteFiles = req.query.deleteFiles === 'true'
@@ -1537,31 +1623,50 @@ router.delete('/:id', async (req, res) => {
       logger.warn('Failed to delete PM2 process during site deletion', { error: pm2Err.message })
     }
 
-    // Purge Nginx configuration files
-    const configFiles = [
-      site.configFile,
-      `/etc/nginx/sites-enabled/${site.domain}`,
-      `/etc/nginx/sites-available/${site.domain}`,
+    // BUG-04 FIX: Remove symlinks first, then real files, then purge dangling symlinks
+    const domainName = site.domain || id
+    const symlinkCandidates = [
+      `/etc/nginx/sites-enabled/${domainName}`,
       `/etc/nginx/sites-enabled/${id}`,
-      `/etc/nginx/sites-available/${id}`,
+      ...(site.configFile?.includes('sites-enabled') ? [site.configFile] : []),
     ].filter(Boolean)
 
-    for (const file of configFiles) {
+    // Step 1: Resolve symlink targets before removing anything
+    const realConfigFiles = new Set()
+    for (const symlink of symlinkCandidates) {
       try {
-        if (fs.existsSync(file)) {
-          fs.unlinkSync(file)
+        const lstat = fs.lstatSync(symlink)
+        if (lstat.isSymbolicLink()) {
+          const target = fs.readlinkSync(symlink)
+          const resolved = path.isAbsolute(target) ? target : path.join(path.dirname(symlink), target)
+          realConfigFiles.add(resolved)
+        } else if (lstat.isFile()) {
+          realConfigFiles.add(symlink)
         }
-        // Fallback realpath check
-        try {
-          const real = fs.realpathSync(file)
-          if (fs.existsSync(real)) {
-            fs.unlinkSync(real)
-          }
-        } catch {}
+      } catch {}
+    }
+
+    // Step 2: Remove symlinks first
+    for (const symlink of symlinkCandidates) {
+      try { fs.unlinkSync(symlink) } catch {}
+    }
+
+    // Step 3: Remove real config files
+    const availableCandidates = [
+      `/etc/nginx/sites-available/${domainName}`,
+      `/etc/nginx/sites-available/${id}`,
+      ...realConfigFiles,
+    ]
+    for (const file of [...new Set(availableCandidates)]) {
+      try {
+        if (fs.existsSync(file)) fs.unlinkSync(file)
       } catch (e) {
-        logger.warn('Failed to delete nginx config file', { file, error: e.message })
+        logger.warn('Failed to remove nginx config file', { file, error: e.message })
       }
     }
+
+    // Step 4: Purge any remaining dangling symlinks
+    purgeDanglingNginxSymlinks()
     
     if (deleteFiles) {
       const root = site.root || `/var/www/${site.domain || id}`
@@ -1587,23 +1692,27 @@ router.delete('/:id', async (req, res) => {
         logger.warn('Failed to drop database during site deletion', { error: dbErr.message })
       }
 
-      if (root.startsWith('/var/www/')) {
-        // Kill any processes having open files inside the root directory to prevent "Directory not empty" lock
+      // BUG-04 FIX: Replaced /var/www/ gate with safe base path validation
+      const SAFE_BASE_PATHS = ['/var/www/', '/home/', '/srv/', '/opt/sites/']
+      const isSystemPath = ['/', '/etc', '/usr', '/bin', '/sbin', '/lib', '/boot', '/root'].includes(root)
+      const isSafePath = !isSystemPath && SAFE_BASE_PATHS.some(base => root.startsWith(base))
+
+      if (isSafePath && fs.existsSync(root)) {
         try {
-          const { stdout: pids } = await execAsync(`lsof -t +D "${root}" || true`)
+          const { stdout: pids } = await execAsync(`lsof -t +D ${shellQuote(root)} 2>/dev/null || true`)
           const pidList = pids.split('\n').map(p => p.trim()).filter(Boolean)
           if (pidList.length > 0) {
             logger.info('Killing locked processes inside root', { root, pidList })
-            await execAsync(`kill -9 ${pidList.join(' ')} || true`)
-            // Small pause to let processes close descriptors
+            await execAsync(`kill -9 ${pidList.join(' ')} 2>/dev/null || true`)
             await new Promise(resolve => setTimeout(resolve, 500))
           }
         } catch (e) {
           logger.warn('Failed to kill processes using directory', { error: e.message })
         }
-
-        await execAsync(`rm -rf "${root}"`)
+        await execAsync(`rm -rf ${shellQuote(root)}`)
         logger.info('Deleted site files', { root })
+      } else if (!isSafePath) {
+        logger.warn('Skipped file deletion: root not in allowed base paths', { root })
       }
     }
 
@@ -1684,7 +1793,7 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
       }
       if (fs.existsSync(path.join(sitePath, '.git'))) {
         send('git pull origin ' + branch)
-        const { stdout } = await execAsync(`cd "${sitePath}" && git pull origin ${branch} 2>&1`)
+        const { stdout } = await execAsync(`cd ${shellQuote(sitePath)} && git pull origin ${branch} 2>&1`)
         stdout.split('\n').filter(Boolean).forEach(l => send(l))
       } else {
         send(`git clone ${gitRepo} …`)
@@ -2517,7 +2626,7 @@ router.get('/:id/backup', async (req, res) => {
     }
 
     // 5. Zip up the entire backup folder
-    await execAsync(`cd "${tmpBackupDir}" && zip -r "${zipPath}" .`)
+    await execAsync(`cd ${shellQuote(tmpBackupDir)} && zip -r "${zipPath}" .`)
 
     // Clean up temporary workspace directory
     await execAsync(`rm -rf "${tmpBackupDir}"`)
@@ -2622,11 +2731,11 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
         const prefix = nodeShellPrefix(nodeVersion)
         
         logger.info('Restored site has start settings, executing restart', { domain, restartCmd })
-        await execAsync(`cd "${targetRoot}" && ${prefix}${restartCmd} 2>&1`).catch(async () => {
+        await execAsync(`cd ${shellQuote(targetRoot)} && ${prefix}${restartCmd} 2>&1`).catch(async () => {
           // If restart failed because it's not registered/running, try starting it
           if (restartCmd.includes('pm2 restart')) {
             const startCmd = restartCmd.replace('restart', 'start')
-            await execAsync(`cd "${targetRoot}" && ${prefix}${startCmd} 2>&1`).catch(() => {})
+            await execAsync(`cd ${shellQuote(targetRoot)} && ${prefix}${startCmd} 2>&1`).catch(() => {})
           }
         })
       } catch (e) {

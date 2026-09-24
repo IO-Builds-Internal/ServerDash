@@ -5,7 +5,7 @@ import {
   Container, Layers, Network, Image, AlertCircle, ShieldAlert,
   Sliders, FileText, Check, Copy, HelpCircle, HardDrive
 } from 'lucide-react'
-import api from '../lib/api'
+import api, { authFetch } from '../lib/api'
 import { localAuth } from '../lib/auth'
 import { Dialog, Overlay } from '../components/Dialog'
 
@@ -27,8 +27,7 @@ function LogDrawer({ container, onClose }) {
     const token = localAuth.getToken() || ''
     const ctrl = new AbortController()
     
-    fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/docker/${container.id}/logs`, {
-      headers: { Authorization: `Bearer ${token}` }, 
+    authFetch(`/api/docker/${container.id}/logs`, {
       signal: ctrl.signal
     }).then(async resp => {
       const reader = resp.body.getReader()

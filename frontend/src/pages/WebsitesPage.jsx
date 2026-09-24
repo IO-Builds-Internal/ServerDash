@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { Globe, Plus, Trash2, RotateCcw, Terminal, FileCode, ShieldCheck, ShieldOff, ExternalLink, RefreshCw, X, Save, Check, CheckCircle, AlertTriangle, Lock, Unlock, Upload, Download, ChevronRight, Folder, Server, Mail, Braces, Wrench, Search, Cpu, Boxes, Database, GitBranch } from 'lucide-react'
 import { localAuth } from '../lib/auth'
-import api from '../lib/api'
+import api, { authFetch } from '../lib/api'
 
 import { Dialog, Overlay } from '../components/Dialog'
 
@@ -211,8 +211,8 @@ function Wizard({ onClose, onCreated }) {
       body.append('customPath', customPath)
       if (source==='zip' && zipFile) body.append('zip', zipFile)
 
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/sites/create-wizard`, {
-        method:'POST', headers:{ Authorization:`Bearer ${token}` }, body
+      const resp = await authFetch('/api/sites/create-wizard', {
+        method: 'POST', body
       })
       
       if (!resp.ok) {
@@ -698,9 +698,7 @@ export default function WebsitesPage() {
     setActionLoading(true)
     try {
       const token = localAuth.getToken() || ''
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/sites/${id}/backup`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const resp = await authFetch(`/api/sites/${id}/backup`)
       if (!resp.ok) throw new Error('Backup download failed')
       const blob = await resp.blob()
       const url = window.URL.createObjectURL(blob)

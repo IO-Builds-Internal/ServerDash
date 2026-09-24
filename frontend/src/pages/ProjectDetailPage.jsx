@@ -8,9 +8,7 @@ import {
   Calendar, CheckCircle, Info, Plus, Save, Download
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
-import api from '../lib/api'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001'
+import api, { API_BASE as API_URL, authFetch } from '../lib/api'
 
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
@@ -234,9 +232,7 @@ export default function ProjectDetailPage() {
     setLogsLoading(true); setLogs([])
     try {
       const token = localAuth.getToken() || ''
-      const resp = await fetch(`${API_URL}/api/supabase/${id}/logs`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const resp = await authFetch(`/api/supabase/${id}/logs`)
       if (!resp.ok) throw new Error('Logs API unavailable')
       const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
       while (true) {
@@ -281,8 +277,8 @@ export default function ProjectDetailPage() {
       const token = localAuth.getToken() || ''
       const body = new FormData(); body.append('migration', migFile)
       const url = runImmediately ? `/api/supabase/${id}/migrate` : `/api/supabase/${id}/migrations/upload`
-      const resp = await fetch(`${API_URL}${url}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body
+      const resp = await authFetch(url, {
+        method: 'POST', body
       })
       const d = await resp.json()
       if (!resp.ok) throw new Error(d.error)
@@ -531,9 +527,8 @@ export default function ProjectDetailPage() {
       const token = localAuth.getToken() || ''
       const body = new FormData()
       body.append('zipFile', file)
-      const resp = await fetch(`${API_URL}/api/supabase/${id}/functions/upload-zip`, {
+      const resp = await authFetch(`/api/supabase/${id}/functions/upload-zip`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body
       })
       const d = await resp.json()

@@ -17,7 +17,7 @@ import {
   Inbox, 
   Settings 
 } from 'lucide-react'
-import api from '../lib/api'
+import api, { authFetch } from '../lib/api'
 import { formatDate } from '../lib/utils'
 import { localAuth } from '../lib/auth'
 
@@ -126,9 +126,9 @@ export default function SmtpPage() {
     setInstalling(true); setInstallLines([]); setInstallDone(false)
     try {
       const token = localAuth.getToken() || ''
-      const resp = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/smtp/install-postfix`, {
+      const resp = await authFetch('/api/smtp/install-postfix', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ domain: setupMailDomain, fromDomain: setupFromDomain }),
       })
       const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''

@@ -1,5 +1,6 @@
 require('dotenv').config()
 const express = require('express')
+const cookieParser = require('cookie-parser')
 const pkg = require('./package.json')
 const cors = require('cors')
 const morgan = require('morgan')
@@ -16,7 +17,7 @@ const { startBackupScheduler } = require('./src/backupScheduler')
 if (!fs.existsSync('logs')) fs.mkdirSync('logs')
 
 const app = express()
-const PORT = process.env.PORT || 3001
+const PORT = process.env.PORT || 4001
 
 // ─── Middleware ────────────────────────────────────────────────────────────────
 const allowedOrigins = [
@@ -28,12 +29,19 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, Postman) or matching origins
-    if (!origin || allowedOrigins.some(o => origin.startsWith(o.replace(':5173', '')))) {
-      cb(null, true)
-    } else {
-      cb(null, true) // Open in dev — tighten in production
+    // Allow requests with no origin (curl, Postman)
+    if (!origin) return cb(null, true)
+    // Allow any configured allowed origin
+    if (allowedOrigins.some(o => origin === o || origin.startsWith(o.replace(':5173', '')))) {
+      return cb(null, true)
     }
+    // BUG-01 FIX: actually reject disallowed origins in production
+    if (process.env.NODE_ENV === 'production') {
+      return cb(new Error(`CORS: origin ${origin} not allowed`))
+    }
+    // In development, allow all but log a warning
+    logger.warn('CORS: allowing non-listed origin in dev mode', { origin })
+    cb(null, true)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -42,6 +50,7 @@ app.use(cors({
 
 app.use(express.json({ limit: '10mb' }))
 app.use(express.urlencoded({ extended: true }))
+app.use(cookieParser(process.env.COOKIE_SECRET || 'serverdash-cookie-secret'))
 
 // HTTP request logging
 app.use(morgan('combined', {
@@ -75,67 +84,9 @@ app.get('/api/health', (req, res) => {
   })
 })
 
-// ── Local auth routes (no Supabase) ────────────────────────────────────────────
-const jwt = require('jsonwebtoken')
-const crypto = require('crypto')
-
-const AUTH_EMAIL = process.env.ADMIN_EMAIL || 'admin@serverdash.local'
-const AUTH_PASSWORD = process.env.ADMIN_PASSWORD || 'ServerDash2026!'
-const JWT_SECRET = process.env.LOCAL_JWT_SECRET
-const JWT_EXPIRES = process.env.LOCAL_JWT_EXPIRES || '8h'
-
-// POST /api/auth/login
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body
-  if (!email || !password) {
-    return res.status(400).json({ error: 'email and password required' })
-  }
-  const safeCompare = (a, b) => {
-    const aBuf = Buffer.from(a)
-    const bBuf = Buffer.from(b)
-    if (aBuf.length !== bBuf.length) {
-      crypto.timingSafeEqual(bBuf, bBuf)
-      return false
-    }
-    return crypto.timingSafeEqual(aBuf, bBuf)
-  }
-
-  const emailOk = safeCompare(email.toLowerCase().trim(), AUTH_EMAIL.toLowerCase().trim())
-  const pwOk = safeCompare(password, AUTH_PASSWORD)
-
-  if (!emailOk || !pwOk) {
-    logger.warn('Login failed', { email })
-    return res.status(401).json({ error: 'Invalid email or password' })
-  }
-  if (!JWT_SECRET) {
-    return res.status(503).json({ error: 'Server auth not configured' })
-  }
-  const token = jwt.sign(
-    { sub: 'admin', email: AUTH_EMAIL, role: 'admin' },
-    JWT_SECRET,
-    { algorithm: 'HS256', expiresIn: JWT_EXPIRES }
-  )
-  // Decode to get expiry
-  const decoded = jwt.decode(token)
-  logger.info('Login success', { email })
-  res.json({ token, expires_at: decoded.exp * 1000 })
-})
-
-// POST /api/auth/logout — token is stored client-side, just acknowledge
-app.post('/api/auth/logout', (req, res) => res.json({ ok: true }))
-
-// GET /api/auth/me — verify token and return user info (used by AuthContext on load)
-app.get('/api/auth/me', (req, res) => {
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) return res.status(401).json({ error: 'No token' })
-  try {
-    const payload = jwt.verify(authHeader.replace('Bearer ', ''), JWT_SECRET, { algorithms: ['HS256'] })
-    res.json({ email: payload.email, role: payload.role, expires_at: payload.exp * 1000 })
-  } catch (err) {
-    const code = err.name === 'TokenExpiredError' ? 'token_expired' : 'invalid_token'
-    res.status(401).json({ error: err.message, code })
-  }
-})
+// ── Apple Passkey / WebAuthn Auth routes (public — no auth middleware) ─────────
+const webAuthnRouter = require('./src/routes/auth-webauthn')
+app.use('/api/auth', webAuthnRouter)
 
 
 
@@ -161,8 +112,9 @@ app.use('/api', authMiddleware)
 app.use('/api/metrics', metricsRouter)
 app.use('/api/sites', sitesRouter)
 app.use('/api/docker', dockerRouter)
+app.use('/api/packages/exec-stream', execLimiter)
 app.use('/api/packages', packagesRouter)
-app.use('/api/exec', execLimiter, packagesRouter)
+// BUG-05 FIX: removed duplicate /api/exec → packagesRouter mount that leaked all package endpoints
 app.use('/api/files', filesRouter)
 app.use('/api/smtp', smtpRouter)
 app.use('/api/supabase', supabaseRouter)

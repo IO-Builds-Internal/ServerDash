@@ -5,12 +5,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # BUG-11 FIX: VITE_ vars must be passed as build-args, not runtime env
+        # because Vite bakes them into the JS bundle at build time.
+        VITE_API_URL: ${VITE_API_URL:-/api}
     ports:
       - "5173:80"
-    environment:
-      - VITE_API_URL=http://localhost:3001
-      - VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
-      - VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
     depends_on:
       - backend
 
@@ -19,26 +19,21 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "3001:3001"
+      - "4001:4001"
     environment:
       - NODE_ENV=production
-      - PORT=3001
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
-      - VPS_HOST=${VPS_HOST}
-      - VPS_USER=${VPS_USER}
-      - VPS_KEY_PATH=/run/secrets/ssh_key
+      - PORT=4001
       - ALLOWED_ORIGIN=${ALLOWED_ORIGIN:-http://localhost:5173}
+      - COOKIE_SECRET=${COOKIE_SECRET}
+      - ALLOW_PASSKEY_RESET=${ALLOW_PASSKEY_RESET:-false}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - backend_logs:/app/logs
-    secrets:
-      - ssh_key
+      # BUG-17 FIX: Mount data directory as named volume so settings.json
+      # and auth.db persist across docker-compose recreates
+      - backend_data:/app/data
     restart: unless-stopped
-
-secrets:
-  ssh_key:
-    file: ${VPS_KEY_PATH:-~/.ssh/id_rsa}
 
 volumes:
   backend_logs:
+  backend_data:

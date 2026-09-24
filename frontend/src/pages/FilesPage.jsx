@@ -5,7 +5,7 @@ import {
   Trash2, Plus, Edit2, RefreshCw, X, Save, FolderPlus, Eye,
   ArrowLeft, Search, Copy, Check, Scissors, Clipboard, Archive
 } from 'lucide-react'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 import { localAuth } from '../lib/auth'
 
 const EDITABLE_EXTENSIONS = ['.js', '.jsx', '.ts', '.tsx', '.json', '.html', '.htm', '.css', '.scss',
@@ -99,7 +99,7 @@ export default function FilesPage({ initialPath, jailedPath }) {
   const location = useLocation()
   const routerNavigate = useReactRouterNavigate()
   const backToSite = location.state?.backToSite
-  const [path, setPath] = useState(location.state?.path || initialPath || (jailedPath ? jailedPath : '/root'))
+  const [path, setPath] = useState(location.state?.path || initialPath || (jailedPath ? jailedPath : '/var/www'))
   const [files, setFiles] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(new Set())
@@ -191,7 +191,7 @@ export default function FilesPage({ initialPath, jailedPath }) {
 
   const download = (name) => {
     const filePath = `${path}/${name}`.replace(/\/+/g, '/')
-    window.open(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/files/download?path=${encodeURIComponent(filePath)}&token=${localAuth.getToken() || ''}`)
+    window.open(`${API_BASE}/api/files/download?path=${encodeURIComponent(filePath)}`)
   }
 
   const copyPath = (name) => {
@@ -380,14 +380,11 @@ export default function FilesPage({ initialPath, jailedPath }) {
       {!jailedPath && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
-            { label: '🏠 /root', path: '/root' },
-            { label: '🌐 /var/www', path: '/var/www' },
-            { label: '⚙️ /etc/nginx', path: '/etc/nginx' },
-            { label: '📦 /opt', path: '/opt' },
-            { label: '🐳 /var/lib/docker', path: '/var/lib/docker' },
-            { label: '📁 /', path: '/' },
-            { label: '📝 /etc', path: '/etc' },
-            { label: '🗄️ /home', path: '/home' },
+            { label: '🌐 /var/www (Websites)', path: '/var/www' },
+            { label: '⚙️ /etc/nginx (VHosts)', path: '/etc/nginx' },
+            { label: '📄 /var/log (Logs)', path: '/var/log' },
+            { label: '💾 /var/backups (Snapshots)', path: '/var/backups' },
+            { label: '📦 /tmp (Staging)', path: '/tmp' },
           ].map(s => (
             <button key={s.path} onClick={() => load(s.path)}
               style={{ fontSize: '0.75rem', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--color-border)', background: path === s.path ? 'rgba(59,130,246,0.15)' : 'var(--color-surface-2)', color: path === s.path ? 'var(--color-primary)' : 'var(--color-text-muted)', cursor: 'pointer', whiteSpace: 'nowrap' }}>

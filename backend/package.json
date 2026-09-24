@@ -11,8 +11,11 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@simplewebauthn/server": "^14.0.2",
     "@supabase/supabase-js": "^2.105.4",
     "axios": "^1.16.1",
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dockerode": "^5.0.0",
     "dotenv": "^17.4.2",

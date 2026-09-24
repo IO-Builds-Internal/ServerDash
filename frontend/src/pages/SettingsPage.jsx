@@ -3,6 +3,7 @@ import { Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, CheckCir
 import api from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
+import { useTheme } from '../contexts/ThemeContext'
 
 // Inline GitHub logo SVG (lucide-react version in use doesn't include it)
 const GithubIcon = ({ size = 16, color = 'currentColor' }) => (
@@ -14,9 +15,10 @@ const GithubIcon = ({ size = 16, color = 'currentColor' }) => (
 export default function SettingsPage() {
   const { user } = useAuth()
   const { branding, updateBranding } = useBranding()
+  const { theme: currentTheme, setTheme, themes } = useTheme()
   const [vps, setVps] = useState({ host: import.meta.env.VITE_VPS_HOST || '', user: 'root', keyPath: '/root/.ssh/id_rsa', port: '22' })
   const [notifications, setNotifications] = useState({ cpuThreshold: 80, ramThreshold: 90, emailAlerts: false, alertEmail: '' })
-  const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || 'http://localhost:4001')
+  const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:4001' : (typeof window !== 'undefined' ? window.location.origin : '')))
   const [saved, setSaved] = useState('')
   const [showKey, setShowKey] = useState(false)
 
@@ -272,6 +274,59 @@ export default function SettingsPage() {
                   <CheckCircle size={10} color="var(--color-success)"/> Page Favicon active
                 </div>
               </div>
+            </div>
+          </SectionCard>
+
+          {/* Minimalist Color Themes */}
+          <SectionCard 
+            title="Appearance & Color Theme" 
+            desc="Select one of 4 curated minimalist palettes. Changes apply instantly across the entire dashboard."
+            icon={Palette}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+              {themes.map((t) => {
+                const isSelected = currentTheme === t.id
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTheme(t.id)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 12,
+                      padding: '12px 14px',
+                      borderRadius: 12,
+                      background: isSelected ? 'var(--color-surface-2)' : 'rgba(255,255,255,0.02)',
+                      border: isSelected ? `2px solid ${t.color}` : '1px solid var(--color-border)',
+                      boxShadow: isSelected ? `0 0 12px ${t.color}33` : 'none',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 28,
+                        height: 28,
+                        borderRadius: '50%',
+                        backgroundColor: t.color,
+                        boxShadow: `0 0 8px ${t.color}`,
+                        border: '2px solid rgba(255,255,255,0.4)',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <div style={{ overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 600, fontSize: '0.875rem', color: isSelected ? 'var(--color-text)' : 'var(--color-text-dim)' }}>
+                        {t.label}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                        {t.name}
+                      </div>
+                    </div>
+                  </button>
+                )
+              })}
             </div>
           </SectionCard>
 

@@ -29,7 +29,7 @@ function DashboardLayout() {
   const [connected, setConnected] = useState(true)
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--color-background)', width: '100%' }}>
+    <div id="app-container" style={{ display: 'flex', minHeight: '100vh', background: 'var(--color-background)', width: '100%' }}>
       <Sidebar connected={connected} />
       <main style={{ flex: 1, overflow: 'auto', padding: '24px', minWidth: 0 }}>
         <Routes>

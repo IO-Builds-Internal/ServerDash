@@ -125,13 +125,13 @@ router.delete('/kill/:pid', async (req, res) => {
   }
 })
 
-// ── GET /api/ports/available?start=3000&count=5 ───────────────────────────────
+// ── GET /api/ports/available?start=3000&count=5 (BUG-15 FIX: portable awk instead of grep -oP) ─
 router.get('/available', async (req, res) => {
   const start = parseInt(req.query.start || '3000')
   const count = parseInt(req.query.count || '1')
 
   try {
-    const { stdout } = await execAsync("ss -tlnp 2>/dev/null | grep LISTEN | awk '{print $4}' | grep -oP ':\\K[0-9]+'")
+    const { stdout } = await execAsync("ss -tlnp 2>/dev/null | awk '/LISTEN/ {print $4}' | awk -F: '{print $NF}'")
     const usedPorts = new Set(stdout.split('\n').filter(Boolean).map(Number))
 
     const available = []
@@ -146,12 +146,12 @@ router.get('/available', async (req, res) => {
   }
 })
 
-// ── GET /api/ports/check?port=3000 ────────────────────────────────────────────
+// ── GET /api/ports/check?port=3000 (BUG-15 FIX: portable awk) ───────────────────
 router.get('/check', async (req, res) => {
   const port = parseInt(req.query.port)
   if (!port) return res.status(400).json({ error: 'port required' })
   try {
-    const { stdout } = await execAsync(`ss -tlnp "sport = :${port}" 2>/dev/null | grep -c LISTEN || echo 0`)
+    const { stdout } = await execAsync(`ss -tlnp 2>/dev/null | awk '/LISTEN/' | awk -F: '{print $NF}' | awk -v p=${port} '$1==p {found=1} END {print found+0}'`)
     const inUse = parseInt(stdout.trim()) > 0
     res.json({ port, available: !inUse, inUse })
   } catch {

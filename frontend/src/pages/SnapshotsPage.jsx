@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 import { 
   Archive, Plus, RefreshCw, Trash2, Download, RotateCcw, 
   Check, AlertTriangle, ShieldCheck, ShieldAlert, Clock, Database, FileCode
@@ -105,7 +105,7 @@ export default function SnapshotsPage() {
   }
 
   const downloadSnapshot = (filename) => {
-    window.open(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/snapshots/${filename}/download?token=${localStorage.getItem('sb-token') || ''}`, '_blank')
+    window.open(`${API_BASE}/api/snapshots/${filename}/download`, '_blank')
   }
 
   const formatSize = (bytes) => {

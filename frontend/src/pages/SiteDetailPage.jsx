@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import api from '../lib/api'
+import api, { authFetch } from '../lib/api'
 import { localAuth } from '../lib/auth'
 import { Dialog } from '../components/Dialog'
 import { 
@@ -135,12 +135,9 @@ export default function SiteDetailPage() {
 
     const token = localAuth.getToken() || ''
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/install-wordpress`, {
+      const resp = await authFetch(`/api/sites/${id}/install-wordpress`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}` 
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           wpTitle,
           wpAdminUser,
@@ -189,12 +186,9 @@ export default function SiteDetailPage() {
 
     const token = localAuth.getToken() || ''
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/install-freepos`, {
+      const resp = await authFetch(`/api/sites/${id}/install-freepos`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}` 
-        }
+        headers: { 'Content-Type': 'application/json' }
       })
 
       if (!resp.ok) {
@@ -665,9 +659,7 @@ export default function SiteDetailPage() {
     setSiteTermLogs(prev => [...prev, `$ ${commandToRun}`])
     
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/exec-stream?command=${encodeURIComponent(commandToRun)}`, {
-        headers: { Authorization: `Bearer ${localAuth.getToken() || ''}` }
-      })
+      const resp = await authFetch(`/api/sites/${id}/exec-stream?command=${encodeURIComponent(commandToRun)}`)
       const reader = resp.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -726,12 +718,9 @@ export default function SiteDetailPage() {
     const token = localAuth.getToken() || ''
     
     try {
-      const resp = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:4001'}/api/sites/${id}/deploy`, { 
+      const resp = await authFetch(`/api/sites/${id}/deploy`, { 
         method: 'POST', 
-        headers: { 
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ commitHash: actualHash })
       })
       

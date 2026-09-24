@@ -8,7 +8,7 @@ import {
   Activity, ArrowDown, ArrowUp, Code2
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
-import api from '../lib/api'
+import api, { authFetch } from '../lib/api'
 
 import { Dialog, Overlay } from '../components/Dialog'
 
@@ -50,8 +50,8 @@ function SupabaseWizard({ onClose, onCreated }) {
       if (form.publicUrl) body.append('publicUrl', form.publicUrl)
       if (sqlFile) body.append('sqlBackup', sqlFile)
 
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/create-stream`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body
+      const resp = await authFetch('/api/supabase/create-stream', {
+        method: 'POST', body
       })
 
       if (!resp.ok) {
@@ -247,9 +247,7 @@ function ManageModal({ project, onClose, onRefresh }) {
   const fetchLogs = async () => {
     setLogsLoading(true); setLogs([])
     const token = localAuth.getToken() || ''
-    const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${project.id}/logs`, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    const resp = await authFetch(`/api/supabase/${project.id}/logs`)
     const reader = resp.body.getReader(); const dec = new TextDecoder(); let buf = ''
     while (true) {
       const { done, value } = await reader.read(); if (done) break
@@ -284,8 +282,8 @@ function ManageModal({ project, onClose, onRefresh }) {
       const token = localAuth.getToken() || ''
       const body = new FormData(); body.append('migration', migFile)
       const url = runImmediately ? `/api/supabase/${project.id}/migrate` : `/api/supabase/${project.id}/migrations/upload`
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}${url}`, {
-        method: 'POST', headers: { Authorization: `Bearer ${token}` }, body
+      const resp = await authFetch(url, {
+        method: 'POST', body
       })
       const d = await resp.json()
       if (!resp.ok) throw new Error(d.error)
@@ -1148,9 +1146,8 @@ export default function SupabasePage() {
     setDeleteProgress({ title: `Deleting ${pName}`, lines: ['▶ Requesting project teardown...'], active: true })
     try {
       const token = localAuth.getToken() || ''
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/delete-stream`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+      const resp = await authFetch(`/api/supabase/${id}/delete-stream`, {
+        method: 'POST'
       })
 
       if (!resp.ok) {
@@ -1233,9 +1230,7 @@ export default function SupabasePage() {
     setActionLoading(true)
     try {
       const token = localAuth.getToken() || ''
-      const resp = await fetch(`${import.meta.env.VITE_API_URL}/api/supabase/${id}/backup`, {
-        headers: { Authorization: `Bearer ${token}` }
-      })
+      const resp = await authFetch(`/api/supabase/${id}/backup`)
       if (!resp.ok) throw new Error('Backup failed')
       const blob = await resp.blob()
       const url = window.URL.createObjectURL(blob)

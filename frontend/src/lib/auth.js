@@ -1,64 +1,61 @@
 /**
- * ServerDash local auth client — completely standalone, no Supabase dependency.
- * Token is stored in localStorage and attached to every API request.
+ * ServerDash Passkey & Cookie Auth Client
+ * Implements Apple Passkey (iCloud Keychain WebAuthn) helpers and cookie-based session checks.
  */
+const API_URL = import.meta.env.VITE_API_URL || ''
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4001'
-const TOKEN_KEY = 'serverdash_token'
+// ── Base64URL helpers (WebAuthn uses ArrayBuffers) ───────────────────────────
+export function bufferToBase64URL(buffer) {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')
+}
+
+export function base64URLToBuffer(base64url) {
+  let base64 = base64url.replace(/-/g, '+').replace(/_/g, '/')
+  while (base64.length % 4) base64 += '='
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes.buffer
+}
+
+export async function checkAuthStatus() {
+  try {
+    const res = await fetch(`${API_URL}/api/auth/status`, {
+      credentials: 'include',
+      cache: 'no-store'
+    })
+    if (!res.ok) return { initialized: false, authenticated: false }
+    return await res.json()
+  } catch (err) {
+    console.error('Auth status check error:', err)
+    return { initialized: false, authenticated: false }
+  }
+}
 
 export const localAuth = {
-  // ── Persist token ──────────────────────────────────────────────────────────
   getToken() {
-    return localStorage.getItem(TOKEN_KEY)
+    // Cookie is sent automatically by the browser via credentials: 'include'
+    return ''
   },
-  setToken(token) {
-    if (token) localStorage.setItem(TOKEN_KEY, token)
-    else localStorage.removeItem(TOKEN_KEY)
+  setToken() {},
+  async signIn() {
+    return { user: { role: 'admin' } }
   },
-
-  // ── Sign in ────────────────────────────────────────────────────────────────
-  async signIn(email, password) {
-    const res = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Login failed')
-    this.setToken(data.token)
-    return data
-  },
-
-  // ── Sign out ───────────────────────────────────────────────────────────────
   async signOut() {
-    const token = this.getToken()
-    if (token) {
-      try {
-        await fetch(`${API_URL}/api/auth/logout`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      } catch {}
-    }
-    this.setToken(null)
-  },
-
-  // ── Verify current token ───────────────────────────────────────────────────
-  async getSession() {
-    const token = this.getToken()
-    if (!token) return null
     try {
-      const res = await fetch(`${API_URL}/api/auth/me`, {
-        headers: { Authorization: `Bearer ${token}` },
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
       })
-      if (!res.ok) {
-        const d = await res.json()
-        if (d.code === 'token_expired') this.setToken(null)
-        return null
-      }
-      return await res.json()
-    } catch {
-      return null   // network error — don't log out, session may still be valid
-    }
+    } catch {}
+    document.body.classList.remove('authenticated')
+    window.location.reload()
   },
+  async getSession() {
+    const status = await checkAuthStatus()
+    return status.authenticated ? { user: { role: 'admin' } } : null
+  }
 }

@@ -4,7 +4,7 @@ import {
   Package, Plus, CheckCircle, X, Play, ShieldAlert, Cpu, Check, AlertTriangle, PlayCircle
 } from 'lucide-react'
 import { localAuth } from '../lib/auth'
-import api from '../lib/api'
+import api, { API_BASE } from '../lib/api'
 
 function TermOutput({ lines, height = 300, running, onClear, onStop }) {
   const ref = useRef()
@@ -83,7 +83,8 @@ function useSSEStream() {
     const token = localAuth.getToken() || ''
 
     const opts = {
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
+      headers: {},
       signal: ctrl.signal
     }
 
@@ -154,7 +155,7 @@ export default function PackagesPage() {
   const [command, setCommand] = useState('')
   const [gitRepoUrl, setGitRepoUrl] = useState('')
   const [gitDest, setGitDest] = useState('/var/www')
-  const BASE = import.meta.env.VITE_API_URL || 'http://localhost:4001'
+  const BASE = API_BASE
 
   const doSearch = useCallback(async (q) => {
     if (q.length < 2) { setSearchResults([]); return }
