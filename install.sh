@@ -69,7 +69,7 @@ fi
 SD_DIR="/root/ServerDash"
 if [ ! -d "$SD_DIR" ]; then
   echo -e "\n📥 Cloning ServerDash codebase from GitHub..."
-  git clone https://github.com/iobuilds/ServerDash.git "$SD_DIR"
+  git clone https://github.com/IO-Builds-Internal/ServerDash.git "$SD_DIR"
 fi
 
 # 7. Generate Secure Passkey Configuration

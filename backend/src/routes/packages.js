@@ -341,7 +341,7 @@ router.get('/serverdash-update/status', async (req, res) => {
 
     try {
       const axios = require('axios')
-      const ghRes = await axios.get('https://api.github.com/repos/iobuilds/ServerDash/releases/latest', {
+      const ghRes = await axios.get('https://api.github.com/repos/IO-Builds-Internal/ServerDash/releases/latest', {
         headers: { 'User-Agent': 'ServerDash-Updater' },
         timeout: 4000
       })
@@ -363,7 +363,7 @@ router.get('/serverdash-update/status', async (req, res) => {
       // Fallback: Query tags endpoint
       try {
         const axios = require('axios')
-        const tagsRes = await axios.get('https://api.github.com/repos/iobuilds/ServerDash/tags', {
+        const tagsRes = await axios.get('https://api.github.com/repos/IO-Builds-Internal/ServerDash/tags', {
           headers: { 'User-Agent': 'ServerDash-Updater' },
           timeout: 4000
         })
