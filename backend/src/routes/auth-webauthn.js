@@ -97,12 +97,13 @@ function getAdminFromDb() {
   } catch { return null }
 }
 
-function setSessionCookie(res, token) {
+function setSessionCookie(res, token, req) {
   const maxAge = 86400 * 7 // 7 days
+  const isSecure = (process.env.COOKIE_SECURE === 'true') || (req ? (req.secure || req.headers['x-forwarded-proto'] === 'https') : false)
   res.cookie('admin_session', token, {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: isSecure,
     maxAge: maxAge * 1000,
     path: '/',
   })
@@ -204,7 +205,7 @@ router.post('/webauthn/register/verify', async (req, res) => {
 
     // Auto-login after registration
     const token = createSession()
-    setSessionCookie(res, token)
+    setSessionCookie(res, token, req)
     logger.info('[WebAuthn] Admin passkey registered and session created', { rpId })
     return res.json({ status: 'ok', verified: true })
   } catch (err) {
@@ -274,7 +275,7 @@ router.post('/webauthn/login/verify', async (req, res) => {
     getDb()?.prepare('UPDATE admin_passkey SET sign_count = ? WHERE id = ?')
       .run(verification.authenticationInfo.newCounter, admin.id)
     const token = createSession()
-    setSessionCookie(res, token)
+    setSessionCookie(res, token, req)
     logger.info('[WebAuthn] Admin authenticated via passkey', { rpId })
     return res.json({ status: 'ok' })
   } catch (err) {
