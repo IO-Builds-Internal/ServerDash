@@ -35,6 +35,22 @@
 | **📈 Web Analytics Suite** | Real-time Nginx access log parsing with active visitor tracking, referrers, browser breakdown, and **GeoIP2 country flags**. |
 | **🐙 GitHub CI/CD** | Automated deployment webhooks with HMAC-SHA256 signature verification and AES-256-GCM encrypted OAuth tokens. |
 | **💾 Swap Memory Manager** | Reconfigure system swap files (0–32 GB) on the fly with persistent `/etc/fstab` synchronization. |
+| **🤖 Zero-Conflict Deploy Skill** | Official **Antigravity AI Agent Skill** (`serverdash-project-deploy`). Zero-conflict automated playbooks for Node.js, React/Vite, Docker Compose, MySQL, PostgreSQL, Supabase, and GitHub Actions CI/CD workflows. |
+
+---
+
+## 🤖 AI Agent Deployment Skill
+
+ServerDash includes a standardized **Antigravity Coding Agent Skill** for zero-conflict application deployments alongside the control panel.
+
+Load the skill in Antigravity or your AI workspace from:
+- [`.agents/skills/serverdash-project-deploy/SKILL.md`](./.agents/skills/serverdash-project-deploy/SKILL.md)
+
+### Supported Deployment Archetypes:
+- **Decoupled Full-Stack**: Node.js/Express (PM2) + React/Vite (`/var/www/<project>/dist`) + Host MySQL with least-privilege users.
+- **Blue/Green Microservices**: Docker Compose (PostgreSQL, Redis, RabbitMQ, S3/MinIO) with zero-downtime Nginx upstream rotation.
+- **Supabase Stacks**: Self-hosted isolated Supabase projects with mapped internal gateways.
+- **Automated CI/CD**: Fail-safe GitHub Actions workflow (`deploy.yml`) utilizing ephemeral tokens and `git reset --hard origin/main` to avoid production merge collisions.
 
 ---
 
