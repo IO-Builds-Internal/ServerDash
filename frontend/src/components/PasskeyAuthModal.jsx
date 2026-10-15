@@ -54,6 +54,14 @@ export default function PasskeyAuthModal({ initialized, onAuthenticated }) {
   })
   const [registeredPendingUser, setRegisteredPendingUser] = useState(null)
 
+  const isSafari = typeof navigator !== 'undefined' && /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
+  const isDynamicWildcardDomain = typeof window !== 'undefined' && (
+    window.location.hostname.endsWith('.sslip.io') ||
+    window.location.hostname.endsWith('.nip.io') ||
+    window.location.hostname.endsWith('.traefik.me') ||
+    /^\d+\.\d+\.\d+\.\d+$/.test(window.location.hostname)
+  )
+
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search)
     const inv = urlParams.get('invite')
@@ -182,6 +190,8 @@ export default function PasskeyAuthModal({ initialized, onAuthenticated }) {
     } catch (err) {
       if (err.name === 'NotAllowedError') {
         setError('Passkey prompt was dismissed. Please try again and approve the Touch ID / biometric prompt.')
+      } else if (isSafari && (err.message?.includes('operation cannot be completed') || isDynamicWildcardDomain)) {
+        setError('Apple Safari (iCloud Keychain) blocks passkey registration on dynamic wildcard domains (*.sslip.io). Please use Google Chrome or configure a custom production domain (e.g. panel.yourcompany.com).')
       } else {
         setError(err.message)
       }
@@ -323,6 +333,25 @@ export default function PasskeyAuthModal({ initialized, onAuthenticated }) {
           }}>
             <AlertCircle size={16} color="#f87171" style={{ flexShrink: 0, marginTop: 1 }} />
             <span style={{ fontSize: '0.8125rem', color: '#f87171', lineHeight: 1.5 }}>{error}</span>
+          </div>
+        )}
+
+        {/* Safari & Dynamic Domain Notice */}
+        {(mode === 'setup' || mode === 'invite') && isSafari && isDynamicWildcardDomain && (
+          <div style={{
+            display: 'flex',
+            gap: 10,
+            alignItems: 'flex-start',
+            padding: '10px 12px',
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+            borderRadius: 10,
+            marginBottom: 16,
+          }}>
+            <AlertCircle size={16} color="#f59e0b" style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: '0.75rem', color: '#fbbf24', lineHeight: 1.4 }}>
+              <strong>Safari Passkey Notice:</strong> Apple Safari / iCloud Keychain restricts passkey creation on wildcard domains (<code>*.sslip.io</code>). Please use <strong>Google Chrome</strong> or configure a custom domain (e.g. <code>panel.yourcompany.com</code>).
+            </span>
           </div>
         )}
 

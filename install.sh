@@ -34,16 +34,21 @@ echo -e "\n🔄 Updating system package index..."
 apt-get update -y
 
 # 3. Install Core Linux Dependencies
-echo -e "\n📦 Installing core dependencies (curl, git, nginx, python, pip, zip)..."
-apt-get install -y curl git nginx python3 python3-pip python3-venv zip unzip ufw certbot python3-certbot-nginx
+echo -e "\n📦 Installing core dependencies (curl, git, nginx, python, pip, zip, build-essential)..."
+apt-get install -y curl git nginx python3 python3-pip python3-venv zip unzip ufw certbot python3-certbot-nginx build-essential
 
-# 4. Install Node.js & NPM (LTS 20)
-if ! command -v node &> /dev/null; then
-  echo -e "\n🟢 Installing Node.js v20 LTS..."
-  curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+# 4. Install Node.js & NPM (LTS 22 - required for better-sqlite3 native bindings)
+NODE_MAJOR=0
+if command -v node &> /dev/null; then
+  NODE_MAJOR=$(node -v | cut -d'.' -f1 | tr -d 'v')
+fi
+
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  echo -e "\n🟢 Installing Node.js v22 LTS (Node >= 22 required for better-sqlite3)..."
+  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y nodejs
 else
-  echo -e "👉 Node.js already installed: $(node -v)"
+  echo -e "👉 Node.js $(node -v) already installed (meets >= 22 requirement)."
 fi
 
 # Install PM2 globally
@@ -75,7 +80,10 @@ fi
 # Parse optional domain from argument or environment
 PANEL_DOMAIN="${1:-${PANEL_DOMAIN:-}}"
 if [ -t 0 ] && [ -z "$PANEL_DOMAIN" ]; then
-  read -r -p "Enter custom domain for ServerDash (optional, e.g. panel.example.com): " INPUT_DOMAIN
+  echo -e "\n💡 \e[33mRecommendation\e[0m: Using a custom domain (e.g. panel.yourdomain.com) with SSL is strongly"
+  echo -e "   recommended for production & Apple Safari (iCloud Keychain) Passkey compatibility."
+  echo -e "   (Note: Apple Safari blocks iCloud Keychain passkey creation on wildcard *.sslip.io domains)."
+  read -r -p "Enter custom domain for ServerDash (or press Enter to use IP): " INPUT_DOMAIN
   PANEL_DOMAIN=$(echo "$INPUT_DOMAIN" | tr -d '[:space:]')
 fi
 
@@ -250,11 +258,12 @@ echo -e "   \e[33m$SETUP_TOKEN\e[0m"
 echo "   (Required once to establish the initial root administrator)."
 if [ -z "$PANEL_DOMAIN" ]; then
   echo ""
-  echo -e "⚠️  \e[33mNote on Plain IP Access & WebAuthn\e[0m:"
-  echo "   WebAuthn (Passkeys) requires a Secure Context (HTTPS or localhost)."
-  echo "   If your browser blocks Passkey registration over plain HTTP, point a domain"
-  echo "   to this IP, run 'certbot --nginx -d yourdomain.com', and update ALLOWED_ORIGIN"
-  echo "   and RP_ID in $SD_DIR/backend/.env."
+  echo -e "⚠️  \e[33mNote on Plain IP / Dynamic Domains & WebAuthn\e[0m:"
+  echo "   - WebAuthn (Passkeys) requires HTTPS or localhost."
+  echo "   - Apple Safari / iCloud Keychain strictly blocks Passkey registration on dynamic"
+  echo "     wildcard domains (*.sslip.io or *.nip.io) with error 'The operation cannot be completed'."
+  echo "   - Recommendation: If using sslip.io, register with Google Chrome, or point a custom domain"
+  echo "     (e.g. panel.example.com) to this IP and run: certbot --nginx -d panel.example.com"
 fi
 echo "=========================================================="
 echo "   Subsequent logins are unlocked via Touch ID or Face ID."
