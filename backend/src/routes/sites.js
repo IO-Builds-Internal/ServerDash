@@ -1,9 +1,10 @@
 const express = require('express')
 const router = express.Router()
-const { exec, spawn } = require('child_process')
+const { exec, execFile, spawn } = require('child_process')
 const crypto = require('crypto')
 const { promisify } = require('util')
 const originalExecAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 
 const getCleanEnv = (customEnv = {}) => {
   const env = { ...process.env, ...customEnv }
@@ -55,7 +56,10 @@ const fs = require('fs')
 const path = require('path')
 const logger = require('../logger')
 const multer = require('multer')
-const upload = multer({ dest: '/tmp/site-uploads/' })
+const upload = multer({
+  dest: '/tmp/site-uploads/',
+  limits: { fileSize: 500 * 1024 * 1024 }
+})
 
 // GitHub integration: auto-inject stored token for GitHub URLs
 // getStoredGithubToken returns null if GitHub is not connected or URL is not GitHub
@@ -66,17 +70,108 @@ try {
 } catch {}
 
 const shellQuote = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`
-const cleanDomain = (value) => String(value || '').trim().toLowerCase().replace(/[^a-z0-9.-]/g, '')
+
+const DOMAIN_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/
+function isValidDomain(d) {
+  if (!d || typeof d !== 'string') return false
+  const clean = d.trim().toLowerCase()
+  if (clean.includes('..') || clean.startsWith('.') || clean.endsWith('.') || clean.length > 253) return false
+  return DOMAIN_REGEX.test(clean)
+}
+
+function cleanDomain(value) {
+  const d = String(value || '').trim().toLowerCase()
+  if (isValidDomain(d)) return d
+  return null
+}
+
+const SQL_IDENTIFIER_REGEX = /^[A-Za-z0-9_]{1,64}$/
 const cleanName = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9_]/g, '_').replace(/^_+|_+$/g, '').slice(0, 40)
 
 function getCentralMetaPath(domain, localRoot) {
-  // BUG-06 FIX: removed hardcoded bbjdemo.iobuilds.com special-case
-  return path.join(localRoot, '.serverdash.json')
+  // Store metadata outside web roots in /var/lib/serverdash/metadata (SD-06)
+  const centralDir = '/var/lib/serverdash/metadata'
+  try {
+    if (!fs.existsSync(centralDir)) {
+      fs.mkdirSync(centralDir, { recursive: true, mode: 0o700 })
+    }
+    const cleanDomain = String(domain || '').replace(/[^a-zA-Z0-9.-]/g, '_')
+    const centralFile = path.join(centralDir, `${cleanDomain}.json`)
+    if (fs.existsSync(centralFile)) return centralFile
+    
+    // Migrate legacy .serverdash.json from localRoot if it exists
+    const localFile = localRoot ? path.join(localRoot, '.serverdash.json') : null
+    if (localFile && fs.existsSync(localFile)) {
+      try {
+        fs.copyFileSync(localFile, centralFile)
+        fs.chmodSync(centralFile, 0o600)
+        fs.unlinkSync(localFile)
+        return centralFile
+      } catch {}
+      return localFile
+    }
+    return centralFile
+  } catch {
+    return localRoot ? path.join(localRoot, '.serverdash.json') : path.join('/tmp', `${domain}.json`)
+  }
 }
+
+function dotfileDenyBlock() {
+  return `location ~ /\\.(?!well-known) {
+        deny all;
+        return 404;
+    }`
+}
+
+function ensureGlobalDotfileDenySnippet() {
+  try {
+    const snippetDir = '/etc/nginx/snippets'
+    const snippetFile = path.join(snippetDir, 'serverdash-dotfile-deny.conf')
+    if (!fs.existsSync(snippetDir)) {
+      try { fs.mkdirSync(snippetDir, { recursive: true }) } catch {}
+    }
+    const snippetContent = `# ServerDash Security: Block hidden dotfiles (.env, .git, etc.)
+location ~ /\\.(?!well-known) {
+    deny all;
+    return 404;
+}
+`
+    if (!fs.existsSync(snippetFile)) {
+      try { fs.writeFileSync(snippetFile, snippetContent, 'utf8') } catch {}
+    }
+
+    // Inspect /etc/nginx/sites-available and patch legacy configs missing the rule (SD-06, G)
+    const availableDir = '/etc/nginx/sites-available'
+    if (fs.existsSync(availableDir)) {
+      const files = fs.readdirSync(availableDir).filter(f => !f.startsWith('.'))
+      let modified = false
+      for (const file of files) {
+        const filePath = path.join(availableDir, file)
+        try {
+          let content = fs.readFileSync(filePath, 'utf8')
+          if (!content.includes('/\\.(?!well-known)') && !content.includes('serverdash-dotfile-deny.conf')) {
+            content = content.replace(/(server\s*\{)/i, `$1\n    ${dotfileDenyBlock()}\n`)
+            fs.writeFileSync(filePath, content, 'utf8')
+            modified = true
+            logger.info('Patched existing legacy Nginx site with dotfile deny block', { file })
+          }
+        } catch {}
+      }
+      if (modified) {
+        try {
+          const { execSync } = require('child_process')
+          execSync('nginx -t && systemctl reload nginx')
+        } catch {}
+      }
+    }
+  } catch {}
+}
+try { ensureGlobalDotfileDenySnippet() } catch {}
 
 function nodeShellPrefix(nodeVersion) {
   if (!nodeVersion || nodeVersion === 'system') return ''
-  return `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; nvm install ${nodeVersion} >/dev/null 2>&1 || true; nvm use ${nodeVersion} >/dev/null 2>&1 || true; `
+  const cleanVersion = String(nodeVersion).replace(/[^a-zA-Z0-9.-]/g, '')
+  return `export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; nvm install ${cleanVersion} >/dev/null 2>&1 || true; nvm use ${cleanVersion} >/dev/null 2>&1 || true; `
 }
 
 function phpFpmSock(version) {
@@ -332,13 +427,15 @@ async function prepareMailboxes({ sitePath, domain, mailboxes, send }) {
   send('⚠ Maildir folders prepared where possible. Postfix/Dovecot virtual mailbox wiring may still need server-level configuration.')
 }
 
-// ── GET /api/sites/check-repo?url= — check if git repo is public or private ──
+// ── GET /api/sites/check-repo?url= — check if git repo is public or private (SD-05) ──
 router.get('/check-repo', async (req, res) => {
   const { url } = req.query
-  if (!url) return res.status(400).json({ error: 'url required' })
+  if (!url || typeof url !== 'string' || !/^(https?:\/\/|git@)/i.test(url.trim()) || url.startsWith('-')) {
+    return res.status(400).json({ error: 'Valid repository URL required' })
+  }
   try {
     // git ls-remote exits 0 for public, non-zero for private (without creds)
-    await execAsync(`git ls-remote --exit-code --heads "${url}" 2>/dev/null`, { timeout: 8000 })
+    await execFileAsync('git', ['ls-remote', '--exit-code', '--heads', '--', url.trim()], { timeout: 8000 })
     res.json({ accessible: true, visibility: 'public' })
   } catch {
     res.json({ accessible: false, visibility: 'private' })
@@ -381,7 +478,6 @@ function sseSetup(res) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
-  res.setHeader('Access-Control-Allow-Origin', '*')
   res.flushHeaders()
   return (data) => res.write(`data: ${data}\n\n`)
 }
@@ -581,9 +677,11 @@ function getDatabaseCredentials(siteRoot) {
       const wpUserMatch = content.match(/Admin user:\s*([^\n]+)/)
       const wpPassMatch = content.match(/Admin password:\s*([^\n]+)/)
       if (dbNameMatch || dbUserMatch || dbPassMatch) {
+        const rawDbName = dbNameMatch ? dbNameMatch[1].trim() : ''
+        const rawDbUser = dbUserMatch ? dbUserMatch[1].trim() : ''
         return {
-          dbName: dbNameMatch ? dbNameMatch[1].trim() : '',
-          dbUser: dbUserMatch ? dbUserMatch[1].trim() : '',
+          dbName: SQL_IDENTIFIER_REGEX.test(rawDbName) ? rawDbName : '',
+          dbUser: SQL_IDENTIFIER_REGEX.test(rawDbUser) ? rawDbUser : '',
           dbPass: dbPassMatch ? dbPassMatch[1].trim() : '',
           wpUser: wpUserMatch ? wpUserMatch[1].trim() : '',
           wpPass: wpPassMatch ? wpPassMatch[1].trim() : '',
@@ -602,9 +700,11 @@ function getDatabaseCredentials(siteRoot) {
       const dbUserMatch = content.match(/define\(\s*['"]DB_USER['"]\s*,\s*['"]([^'"]+)['"]\s*\)/)
       const dbPassMatch = content.match(/define\(\s*['"]DB_PASSWORD['"]\s*,\s*['"]([^'"]+)['"]\s*\)/)
       if (dbNameMatch || dbUserMatch || dbPassMatch) {
+        const rawDbName = dbNameMatch ? dbNameMatch[1].trim() : ''
+        const rawDbUser = dbUserMatch ? dbUserMatch[1].trim() : ''
         return {
-          dbName: dbNameMatch ? dbNameMatch[1].trim() : '',
-          dbUser: dbUserMatch ? dbUserMatch[1].trim() : '',
+          dbName: SQL_IDENTIFIER_REGEX.test(rawDbName) ? rawDbName : '',
+          dbUser: SQL_IDENTIFIER_REGEX.test(rawDbUser) ? rawDbUser : '',
           dbPass: dbPassMatch ? dbPassMatch[1].trim() : '',
           isWordPress: true
         }
@@ -695,8 +795,8 @@ router.post('/:id/db-reset-password', async (req, res) => {
     }
 
     const credentials = getDatabaseCredentials(foundSite.root)
-    if (!credentials || !credentials.dbUser) {
-      return res.status(400).json({ error: 'No database credentials detected for this site' })
+    if (!credentials || !credentials.dbUser || !SQL_IDENTIFIER_REGEX.test(credentials.dbUser)) {
+      return res.status(400).json({ error: 'No valid database credentials detected for this site' })
     }
 
     const newPass = require('crypto').randomBytes(18).toString('base64url')
@@ -903,30 +1003,39 @@ async function getNginxSites() {
 }
 
 
-// ── POST /api/sites/create ─────────────────────────────────────────────────────
+// ── POST /api/sites/create (SD-04, SD-05, SD-06) ──────────────────────────────
 router.post('/create', async (req, res) => {
-  const { domain, type = 'static', gitRepo, branch = 'main', port = 3000, envVars = [] } = req.body
-  if (!domain) return res.status(400).json({ error: 'domain required' })
+  const { domain, type = 'static', gitRepo, branch = 'main', port = 3000 } = req.body
+  const cleanDomain = String(domain || '').trim().toLowerCase()
+  if (!isValidDomain(cleanDomain)) {
+    return res.status(400).json({ error: 'Valid fully qualified domain name required' })
+  }
+  const cleanBranch = String(branch || 'main').trim().replace(/[^a-zA-Z0-9_.\-\/]/g, '')
+  if (!cleanBranch) return res.status(400).json({ error: 'Valid branch required' })
 
   try {
-    const sitePath = `/var/www/${domain}`
+    const sitePath = `/var/www/${cleanDomain}`
     fs.mkdirSync(sitePath, { recursive: true })
 
     if (gitRepo) {
-      await execAsync(`git clone ${gitRepo} ${sitePath} --branch ${branch} 2>&1 || (cd ${sitePath} && git pull) 2>&1`)
+      if (gitRepo.startsWith('-') || !/^(https?:\/\/|git@)/i.test(gitRepo.trim())) {
+        return res.status(400).json({ error: 'Invalid git repository URL format' })
+      }
+      await execAsync(`git clone --branch ${shellQuote(cleanBranch)} -- ${shellQuote(gitRepo.trim())} ${shellQuote(sitePath)} 2>&1 || (cd ${shellQuote(sitePath)} && git pull) 2>&1`)
     }
 
     if (type === 'node') {
-      await execAsync(`cd ${sitePath} && npm install --production 2>&1`)
-      await execAsync(`pm2 start ${sitePath}/index.js --name ${domain} -- --port ${port} 2>&1 || true`)
+      await execAsync(`cd ${shellQuote(sitePath)} && npm install --production 2>&1`)
+      await execAsync(`pm2 start ${shellQuote(sitePath + '/index.js')} --name ${shellQuote(cleanDomain)} -- --port ${parseInt(port) || 3000} 2>&1 || true`)
     }
 
     const nginxConf = type === 'proxy' || type === 'node' ? `server {
     listen 80;
     listen [::]:80;
-    server_name ${domain};
+    server_name ${cleanDomain};
+    ${dotfileDenyBlock()}
     location / {
-        proxy_pass http://localhost:${port};
+        proxy_pass http://localhost:${parseInt(port) || 3000};
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection 'upgrade';
@@ -936,15 +1045,27 @@ router.post('/create', async (req, res) => {
 }` : `server {
     listen 80;
     listen [::]:80;
-    server_name ${domain};
+    server_name ${cleanDomain};
     root ${sitePath}${type === 'static' ? '/dist' : ''};
     index index.html index.php;
+    ${dotfileDenyBlock()}
     location / { try_files $uri $uri/ /index.html; }
     ${type === 'php' ? 'location ~ \\.php$ { fastcgi_pass unix:/run/php/php8.2-fpm.sock; fastcgi_index index.php; include fastcgi_params; fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name; }' : ''}
 }`
 
-    fs.writeFileSync(`/etc/nginx/sites-available/${domain}`, nginxConf)
-    await execAsync(`ln -sf /etc/nginx/sites-available/${domain} /etc/nginx/sites-enabled/${domain}`)
+    // Initialize site metadata with a dedicated per-site webhookSecret (SD-04)
+    const metaPath = getCentralMetaPath(cleanDomain, sitePath)
+    const initialMeta = {
+      domain: cleanDomain,
+      type,
+      webhookSecret: crypto.randomBytes(24).toString('hex'),
+      autoDeployEnabled: true,
+      createdAt: new Date().toISOString()
+    }
+    fs.writeFileSync(metaPath, JSON.stringify(initialMeta, null, 2), { encoding: 'utf8', mode: 0o600 })
+
+    fs.writeFileSync(`/etc/nginx/sites-available/${cleanDomain}`, nginxConf)
+    await execAsync(`ln -sf /etc/nginx/sites-available/${shellQuote(cleanDomain)} /etc/nginx/sites-enabled/${shellQuote(cleanDomain)}`)
     try {
       await execAsync('nginx -t 2>&1')
     } catch (e) {
@@ -975,26 +1096,27 @@ router.post('/:id/deploy', async (req, res) => {
 
     const commitHash = req.body?.commitHash || req.query?.commitHash
     if (fs.existsSync(path.join(root, '.git'))) {
-      // Auto-inject stored GitHub token if available for this repo
+      const gitEnv = { ...getCleanEnv() }
       try {
         const { stdout: remoteUrl } = await execAsync(`cd ${shellQuote(root)} && git remote get-url origin 2>/dev/null || true`)
         const gitRemote = remoteUrl.trim()
         const storedToken = getStoredGithubToken(gitRemote)
         if (storedToken && gitRemote && gitRemote.includes('github.com')) {
-          const u = new URL(gitRemote.replace(/^git@github\.com:/, 'https://github.com/').replace(/:(\w)/, '/$1'))
-          u.username = 'oauth2'; u.password = storedToken
-          await execAsync(`cd ${shellQuote(root)} && git remote set-url origin ${shellQuote(u.toString())} 2>&1`)
+          const basicAuth = Buffer.from(`oauth2:${storedToken}`).toString('base64')
+          gitEnv.GIT_CONFIG_COUNT = '1'
+          gitEnv.GIT_CONFIG_KEY_0 = 'http.extraheader'
+          gitEnv.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${basicAuth}`
         }
       } catch {}
 
       if (commitHash) {
         send(`Restoring / Rolling back to commit ${commitHash}…`)
-        await execAsync(`cd ${shellQuote(root)} && git fetch origin 2>&1 || true`)
-        const { stdout: resetOut } = await execAsync(`cd ${shellQuote(root)} && git reset --hard ${shellQuote(commitHash)} 2>&1`)
+        await execAsync(`cd ${shellQuote(root)} && git fetch origin 2>&1 || true`, { env: gitEnv })
+        const { stdout: resetOut } = await execAsync(`cd ${shellQuote(root)} && git reset --hard ${shellQuote(commitHash)} 2>&1`, { env: gitEnv })
         resetOut.split('\n').filter(Boolean).forEach(l => send(l))
       } else {
         send('git pull…')
-        const { stdout: gitOut } = await execAsync(`cd ${shellQuote(root)} && git pull 2>&1`)
+        const { stdout: gitOut } = await execAsync(`cd ${shellQuote(root)} && git pull 2>&1`, { env: gitEnv })
         gitOut.split('\n').filter(Boolean).forEach(l => send(l))
       }
     }
@@ -1116,7 +1238,7 @@ router.post('/:id/webhook', async (req, res) => {
 
     const root = site.root || `/var/www/${site.domain}`
 
-    // BUG-16 FIX: Verify webhook HMAC secret if configured before triggering deploy
+    // SD-04: Mandatory webhook secret verification over raw body bytes
     let webhookSecret = null
     const metaPathCheck = getCentralMetaPath(site.domain, root)
     if (fs.existsSync(metaPathCheck)) {
@@ -1130,22 +1252,31 @@ router.post('/:id/webhook', async (req, res) => {
       } catch (e) {}
     }
 
-    if (webhookSecret) {
-      const sig = req.headers['x-hub-signature-256'] || req.headers['x-gitlab-token']
-      if (!sig) {
-        logger.warn(`[${site.domain}] Webhook rejected: missing signature header`)
-        return res.status(401).json({ error: 'Missing webhook signature header' })
+    if (!webhookSecret) {
+      logger.warn(`[${site.domain}] Webhook rejected: no webhookSecret configured`)
+      return res.status(403).json({ error: 'Webhook secret is not configured for this site. Please configure it in ServerDash.' })
+    }
+
+    const sig = req.headers['x-hub-signature-256'] || req.headers['x-gitlab-token']
+    if (!sig || typeof sig !== 'string') {
+      logger.warn(`[${site.domain}] Webhook rejected: missing signature header`)
+      return res.status(401).json({ error: 'Missing webhook signature header' })
+    }
+
+    if (sig.startsWith('sha256=')) {
+      const hmac = crypto.createHmac('sha256', webhookSecret)
+      const rawPayload = req.rawBody || Buffer.from(JSON.stringify(req.body))
+      const digest = 'sha256=' + hmac.update(rawPayload).digest('hex')
+      const sigBuf = Buffer.from(sig)
+      const digBuf = Buffer.from(digest)
+      if (sigBuf.length !== digBuf.length || !crypto.timingSafeEqual(sigBuf, digBuf)) {
+        logger.warn(`[${site.domain}] Webhook rejected: invalid HMAC signature`)
+        return res.status(401).json({ error: 'Invalid webhook signature' })
       }
-      if (sig.startsWith('sha256=')) {
-        const hmac = crypto.createHmac('sha256', webhookSecret)
-        const digest = 'sha256=' + hmac.update(JSON.stringify(req.body)).digest('hex')
-        const sigBuf = Buffer.from(sig)
-        const digBuf = Buffer.from(digest)
-        if (sigBuf.length !== digBuf.length || !crypto.timingSafeEqual(sigBuf, digBuf)) {
-          logger.warn(`[${site.domain}] Webhook rejected: invalid HMAC signature`)
-          return res.status(401).json({ error: 'Invalid webhook signature' })
-        }
-      } else if (sig !== webhookSecret) {
+    } else {
+      const sigBuf = Buffer.from(sig)
+      const secBuf = Buffer.from(webhookSecret)
+      if (sigBuf.length !== secBuf.length || !crypto.timingSafeEqual(sigBuf, secBuf)) {
         logger.warn(`[${site.domain}] Webhook rejected: invalid secret token`)
         return res.status(401).json({ error: 'Invalid webhook token' })
       }
@@ -1335,7 +1466,7 @@ router.get('/:id/build-settings', async (req, res) => {
   }
 })
 
-// ── POST /api/sites/:id/build-settings ─────────────────────────────────────────
+// ── POST /api/sites/:id/build-settings (SD-04: merge metadata) ────────────────
 router.post('/:id/build-settings', async (req, res) => {
   const { id } = req.params
   const { installCommand, buildCommand, restartCommand, nodeVersion } = req.body
@@ -1348,20 +1479,26 @@ router.post('/:id/build-settings', async (req, res) => {
       fs.mkdirSync(root, { recursive: true })
     }
     const metaPath = getCentralMetaPath(site.domain, root)
-    const settings = {
-      installCommand: installCommand || 'npm install --production',
-      buildCommand: buildCommand || 'npm run build',
-      restartCommand: restartCommand || `pm2 restart "${site.domain}"`,
-      nodeVersion: nodeVersion || 'system'
+    let existingMeta = {}
+    if (fs.existsSync(metaPath)) {
+      try { existingMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
     }
-    fs.writeFileSync(metaPath, JSON.stringify(settings, null, 2), 'utf8')
-    res.json({ success: true })
+    const settings = {
+      ...existingMeta,
+      installCommand: installCommand || existingMeta.installCommand || 'npm install --production',
+      buildCommand: buildCommand || existingMeta.buildCommand || 'npm run build',
+      restartCommand: restartCommand || existingMeta.restartCommand || `pm2 restart "${site.domain}"`,
+      nodeVersion: nodeVersion || existingMeta.nodeVersion || 'system',
+      webhookSecret: existingMeta.webhookSecret || crypto.randomBytes(24).toString('hex')
+    }
+    fs.writeFileSync(metaPath, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 })
+    res.json({ success: true, webhookSecret: settings.webhookSecret })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// ── GET /api/sites/:id/auto-deploy ─────────────────────────────────────────────
+// ── GET /api/sites/:id/auto-deploy (SD-04: returns webhookSecret) ─────────────
 router.get('/:id/auto-deploy', async (req, res) => {
   const { id } = req.params
   try {
@@ -1370,14 +1507,23 @@ router.get('/:id/auto-deploy', async (req, res) => {
     if (!site) return res.status(404).json({ error: 'Site not found' })
     const root = site.root || `/var/www/${site.domain}`
     const metaPath = getCentralMetaPath(site.domain, root)
-    let autoDeployEnabled = true // default ON
+    let autoDeployEnabled = true
+    let webhookSecret = ''
+    let meta = {}
     if (fs.existsSync(metaPath)) {
       try {
-        const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+        meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
         if (meta.autoDeployEnabled !== undefined) autoDeployEnabled = meta.autoDeployEnabled
+        if (meta.webhookSecret) webhookSecret = meta.webhookSecret
       } catch (e) {}
     }
-    res.json({ autoDeployEnabled })
+    // Auto-generate webhook secret if not yet generated
+    if (!webhookSecret) {
+      webhookSecret = crypto.randomBytes(24).toString('hex')
+      meta.webhookSecret = webhookSecret
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { encoding: 'utf8', mode: 0o600 })
+    }
+    res.json({ autoDeployEnabled, webhookSecret, webhookUrl: `/api/sites/${id}/webhook` })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1399,9 +1545,12 @@ router.post('/:id/auto-deploy', async (req, res) => {
       try { existing = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch (e) {}
     }
     existing.autoDeployEnabled = Boolean(autoDeployEnabled)
-    fs.writeFileSync(metaPath, JSON.stringify(existing, null, 2), 'utf8')
+    if (!existing.webhookSecret) {
+      existing.webhookSecret = crypto.randomBytes(24).toString('hex')
+    }
+    fs.writeFileSync(metaPath, JSON.stringify(existing, null, 2), { encoding: 'utf8', mode: 0o600 })
     logger.info(`[${site.domain}] Auto-deploy set to: ${existing.autoDeployEnabled}`)
-    res.json({ success: true, autoDeployEnabled: existing.autoDeployEnabled })
+    res.json({ success: true, autoDeployEnabled: existing.autoDeployEnabled, webhookSecret: existing.webhookSecret })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
@@ -1674,12 +1823,12 @@ router.delete('/:id', async (req, res) => {
       // Clean up database if it's a WordPress site
       try {
         const credentials = getDatabaseCredentials(root)
-        if (credentials && credentials.dbName) {
+        if (credentials && credentials.dbName && SQL_IDENTIFIER_REGEX.test(credentials.dbName)) {
           logger.info('Cleaning up database for site during deletion', { domain: site.domain, dbName: credentials.dbName })
           const sqlQueries = [
             `DROP DATABASE IF EXISTS \`${credentials.dbName}\`;`,
           ]
-          if (credentials.dbUser) {
+          if (credentials.dbUser && SQL_IDENTIFIER_REGEX.test(credentials.dbUser)) {
             sqlQueries.push(`DROP USER IF EXISTS '${credentials.dbUser}'@'localhost';`)
           }
           const sql = sqlQueries.join(' ')
@@ -1727,15 +1876,26 @@ router.delete('/:id', async (req, res) => {
   }
 })
 
-// ── GET /api/sites/:id/logs ────────────────────────────────────────────────────
+// ── GET /api/sites/:id/logs (SD-05) ───────────────────────────────────────────
 router.get('/:id/logs', async (req, res) => {
   const { id } = req.params
   try {
     const sites = await getNginxSites()
     const site = sites.find(s => s.id === id)
-    const domain = site?.domain || id
-    const { stdout } = await execAsync(`tail -q -n 100 /var/log/nginx/${domain}-access.log /var/log/nginx/${domain}-error.log /var/log/nginx/access.log 2>/dev/null || true`)
-    res.json({ logs: stdout.split('\n').filter(Boolean) })
+    const rawDomain = site?.domain || id
+    const domain = String(rawDomain).replace(/[^a-zA-Z0-9.-]/g, '')
+    if (!domain) return res.status(400).json({ error: 'Invalid site identifier' })
+    const candidateFiles = [
+      `/var/log/nginx/${domain}-access.log`,
+      `/var/log/nginx/${domain}-error.log`,
+      '/var/log/nginx/access.log'
+    ].filter(f => fs.existsSync(f))
+    
+    if (candidateFiles.length === 0) {
+      return res.json({ logs: ['No log files found for site yet.'] })
+    }
+    const { stdout } = await execFileAsync('tail', ['-q', '-n', '100', ...candidateFiles])
+    res.json({ logs: (stdout || '').split('\n').filter(Boolean) })
   } catch (err) {
     res.json({ logs: [`Error reading logs: ${err.message}`] })
   }
@@ -1744,7 +1904,8 @@ router.get('/:id/logs', async (req, res) => {
 // ── POST /api/sites/create-wizard — SSE wizard deployment ─────────────────────
 router.post('/create-wizard', upload.single('zip'), async (req, res) => {
   const send = sseSetup(res)
-  logger.info('Wizard start', { body: req.body, file: req.file ? req.file.originalname : null })
+  // SD-15: Redact sensitive parameters from logs
+  logger.info('Wizard start', { domain: req.body?.domain, type: req.body?.type, source: req.body?.source })
   const {
     type='static',
     source='git',
@@ -1773,7 +1934,9 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
   const domain = cleanDomain(req.body.domain)
   if (!domain) { send('✗ valid domain required'); return res.end() }
 
-  const sitePath = customPath && customPath.trim() ? path.resolve(customPath.trim()) : `/var/www/${domain}`
+  const sitePath = customPath && customPath.trim() && path.resolve(customPath.trim()).startsWith('/var/www/')
+    ? path.resolve(customPath.trim())
+    : `/var/www/${domain}`
 
   try {
     send(`▶ Creating site: ${domain} (${type})`)
@@ -1782,23 +1945,26 @@ router.post('/create-wizard', upload.single('zip'), async (req, res) => {
 
     // --- Source ---
     if (source === 'git' && gitRepo && type !== 'proxy') {
-      let cloneUrl = gitRepo
-      // Use explicitly provided credentials first, then fall back to stored GitHub token
+      const cleanBranch = String(branch || 'main').trim().replace(/[^a-zA-Z0-9_.\-\/]/g, '') || 'main'
       const effectiveToken = gitToken || getStoredGithubToken(gitRepo)
       const effectiveUser = gitUser || (effectiveToken && !gitToken ? 'oauth2' : '')
-      if (effectiveUser && effectiveToken) {
-        const u = new URL(gitRepo)
-        u.username = effectiveUser; u.password = effectiveToken
-        cloneUrl = u.toString()
-      }
+      
       if (fs.existsSync(path.join(sitePath, '.git'))) {
-        send('git pull origin ' + branch)
-        const { stdout } = await execAsync(`cd ${shellQuote(sitePath)} && git pull origin ${branch} 2>&1`)
+        send('git pull origin ' + cleanBranch)
+        const { stdout } = await execAsync(`cd ${shellQuote(sitePath)} && git pull origin ${shellQuote(cleanBranch)} 2>&1`)
         stdout.split('\n').filter(Boolean).forEach(l => send(l))
       } else {
         send(`git clone ${gitRepo} …`)
-        const { stdout } = await execAsync(`git clone "${cloneUrl}" "${sitePath}" --branch ${branch} 2>&1`)
-        stdout.split('\n').filter(Boolean).forEach(l => send(l))
+        const gitArgs = ['clone', '--branch', cleanBranch, '--', gitRepo.trim(), sitePath]
+        const gitEnv = { ...getCleanEnv() }
+        if (effectiveUser && effectiveToken) {
+          const basicAuth = Buffer.from(`${effectiveUser}:${effectiveToken}`).toString('base64')
+          gitEnv.GIT_CONFIG_COUNT = '1'
+          gitEnv.GIT_CONFIG_KEY_0 = 'http.extraheader'
+          gitEnv.GIT_CONFIG_VALUE_0 = `AUTHORIZATION: basic ${basicAuth}`
+        }
+        const { stdout, stderr } = await execFileAsync('git', gitArgs, { env: gitEnv }).catch(e => ({ stdout: e.stdout, stderr: e.stderr }))
+        ;((stdout || '') + (stderr || '')).split('\n').filter(Boolean).forEach(l => send(l))
       }
       send('✓ Repository cloned')
     } else if (source === 'zip') {
@@ -2032,6 +2198,7 @@ if __name__ == '__main__':
     listen [::]:80;
     server_name ${domain};
     client_max_body_size 512M;
+    ${dotfileDenyBlock()}
     location / {
         proxy_pass http://localhost:${port};
         proxy_http_version 1.1;
@@ -2054,6 +2221,7 @@ if __name__ == '__main__':
     listen [::]:80;
     server_name ${domain};
     client_max_body_size 512M;
+    ${dotfileDenyBlock()}
     ${spaNote}root ${webRoot};
     index index.html${type==='php'?' index.php':''};
     gzip on;
@@ -2101,6 +2269,23 @@ if __name__ == '__main__':
         send('  ⚠ SSL failed. Ensure your domain DNS points to this server\'s IP and Cloudflare proxy is paused.')
       }
     }
+
+    // Initialize central metadata with webhookSecret (SD-04, SD-06)
+    const wizardMetaPath = getCentralMetaPath(domain, sitePath)
+    let wizardMeta = {}
+    if (fs.existsSync(wizardMetaPath)) {
+      try { wizardMeta = JSON.parse(fs.readFileSync(wizardMetaPath, 'utf8')) } catch {}
+    }
+    wizardMeta = {
+      domain,
+      type,
+      nodeVersion,
+      autoDeployEnabled: true,
+      webhookSecret: wizardMeta.webhookSecret || crypto.randomBytes(24).toString('hex'),
+      createdAt: wizardMeta.createdAt || new Date().toISOString(),
+      ...wizardMeta
+    }
+    fs.writeFileSync(wizardMetaPath, JSON.stringify(wizardMeta, null, 2), { encoding: 'utf8', mode: 0o600 })
 
     send('✓ Site deployment complete!')
     logger.info('Wizard deployed site', { domain, type })
@@ -2269,8 +2454,8 @@ router.post('/:id/mail/mailbox', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
   const { username, password } = req.body
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' })
+  if (!username || !password || /[\r\n\0]/.test(password)) {
+    return res.status(400).json({ error: 'Username and password (without newlines) are required.' })
   }
 
   const cleanDomain = site.domain.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -2282,7 +2467,7 @@ router.post('/:id/mail/mailbox', async (req, res) => {
     systemUsername = systemUsername.slice(0, 32)
   }
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let meta = {}
   if (fs.existsSync(metaPath)) {
     try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
@@ -2303,15 +2488,21 @@ router.post('/:id/mail/mailbox', async (req, res) => {
       userExists = true
     } catch {}
 
-    // 2. Create system user if not exists
+    // 2. Create system user if not exists (SD-09: nologin shell)
     if (!userExists) {
       logger.info(`Creating system user: ${systemUsername}`)
-      await execAsync(`useradd -m -s /bin/bash ${systemUsername}`)
+      await execAsync(`useradd -m -s /usr/sbin/nologin ${shellQuote(systemUsername)}`)
     }
 
-    // 3. Set password
+    // 3. Set password safely via stdin (SD-05, A)
     logger.info(`Setting password for system user: ${systemUsername}`)
-    await execAsync(`echo "${systemUsername}:${password}" | chpasswd`)
+    const chpassChild = spawn('chpasswd')
+    chpassChild.stdin.write(`${systemUsername}:${password}\n`)
+    chpassChild.stdin.end()
+    await new Promise((resolve, reject) => {
+      chpassChild.on('close', code => code === 0 ? resolve() : reject(new Error(`chpasswd exited with code ${code}`)))
+      chpassChild.on('error', reject)
+    })
 
     // 4. Set up Maildir structure
     logger.info(`Setting up Maildir for user: ${systemUsername}`)
@@ -2320,13 +2511,14 @@ router.post('/:id/mail/mailbox', async (req, res) => {
     await execAsync(`chown -R ${systemUsername}:${systemUsername} ${homeDir}/Maildir`)
     await execAsync(`chmod -R 700 ${homeDir}/Maildir`)
 
-    // 5. Store metadata
+    // 5. Store metadata centrally (SD-06, I)
     meta.mail.mailboxes.push({ 
       username, 
       systemUsername, 
       createdAt: new Date().toISOString() 
     })
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { mode: 0o600 })
+    try { fs.chmodSync(metaPath, 0o600) } catch {}
 
     // 6. Sync Postfix configuration
     await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
@@ -2348,7 +2540,7 @@ router.delete('/:id/mail/mailbox/:username', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
   const username = req.params.username
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let meta = {}
   if (fs.existsSync(metaPath)) {
     try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
@@ -2370,7 +2562,8 @@ router.delete('/:id/mail/mailbox/:username', async (req, res) => {
 
     // 2. Filter metadata
     meta.mail.mailboxes = meta.mail.mailboxes.filter(m => m.username.toLowerCase() !== username.toLowerCase())
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { mode: 0o600 })
+    try { fs.chmodSync(metaPath, 0o600) } catch {}
 
     // 3. Sync Postfix
     await syncPostfixMail(site.domain, meta.mail.mailboxes, meta.mail.forwarders || [])
@@ -2392,7 +2585,7 @@ router.post('/:id/mail/forwarder', async (req, res) => {
     return res.status(400).json({ error: 'Source alias and target email are required.' })
   }
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let meta = {}
   if (fs.existsSync(metaPath)) {
     try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
@@ -2406,7 +2599,8 @@ router.post('/:id/mail/forwarder', async (req, res) => {
   }
 
   meta.mail.forwarders.push({ source, target, createdAt: new Date().toISOString() })
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { mode: 0o600 })
+  try { fs.chmodSync(metaPath, 0o600) } catch {}
 
   await syncPostfixMail(site.domain, meta.mail.mailboxes || [], meta.mail.forwarders)
 
@@ -2419,7 +2613,7 @@ router.delete('/:id/mail/forwarder/:source', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
   const source = req.params.source
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let meta = {}
   if (fs.existsSync(metaPath)) {
     try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')) } catch {}
@@ -2428,7 +2622,8 @@ router.delete('/:id/mail/forwarder/:source', async (req, res) => {
   if (!meta.mail || !meta.mail.forwarders) return res.status(400).json({ error: 'No forwarders found' })
 
   meta.mail.forwarders = meta.mail.forwarders.filter(f => f.source.toLowerCase() !== source.toLowerCase())
-  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf8')
+  fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), { mode: 0o600 })
+  try { fs.chmodSync(metaPath, 0o600) } catch {}
 
   await syncPostfixMail(site.domain, meta.mail.mailboxes || [], meta.mail.forwarders)
 
@@ -2441,7 +2636,7 @@ router.post('/:id/mail/test', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
   const { to } = req.body
 
-  const metaPath = path.join(site.root, '.serverdash.json')
+  const metaPath = getCentralMetaPath(site.domain, site.root)
   let smtpConfig = null
   if (fs.existsSync(metaPath)) {
     try {
@@ -2463,7 +2658,7 @@ router.post('/:id/mail/test', async (req, res) => {
       port: parseInt(smtpConfig.port) || 587,
       secure: smtpConfig.encryption === 'SSL',
       auth: smtpConfig.username ? { user: smtpConfig.username, pass: smtpConfig.password } : undefined,
-      tls: { rejectUnauthorized: false },
+      tls: { rejectUnauthorized: smtpConfig.rejectUnauthorized === false ? false : true },
     })
 
     await transporter.sendMail({
@@ -2486,7 +2681,7 @@ router.get('/:id/mail/dns', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
 
   const os = require('os')
-  let ip = '207.180.243.219' // Fallback to your VPS IP
+  let ip = process.env.VPS_HOST || '127.0.0.1'
   try {
     const nets = os.networkInterfaces()
     let found = false
@@ -2587,12 +2782,15 @@ router.get('/:id/backup', async (req, res) => {
   if (!site || !site.root) return res.status(404).json({ error: 'Site not found' })
 
   const domain = site.domain
-  const tmpBackupDir = `/tmp/sd-backup-${domain}-${Date.now()}`
-  const zipPath = `/tmp/${domain}-full-backup-${Date.now()}.zip`
-
+  let stagingDir
   try {
-    // Ensure tmp dir exists
-    fs.mkdirSync(`${tmpBackupDir}/files`, { recursive: true })
+    stagingDir = fs.mkdtempSync('/tmp/sd-backup-')
+    try { fs.chmodSync(stagingDir, 0o700) } catch {}
+    const tmpBackupDir = path.join(stagingDir, 'content')
+    const zipPath = path.join(stagingDir, `${domain}-full-backup.zip`)
+
+    // Ensure tmp dir exists with restricted permissions (SD-07)
+    fs.mkdirSync(`${tmpBackupDir}/files`, { recursive: true, mode: 0o700 })
 
     // 1. Copy Nginx virtual host configuration
     const nginxAvailable = `/etc/nginx/sites-available/${domain}`
@@ -2601,7 +2799,7 @@ router.get('/:id/backup', async (req, res) => {
     }
 
     // 2. Export database if attached and credentials are found
-    if (site.database && site.database.name) {
+    if (site.database && site.database.name && SQL_IDENTIFIER_REGEX.test(site.database.name)) {
       const sqlFile = `${tmpBackupDir}/db.sql`
       try {
         await execAsync(
@@ -2625,18 +2823,22 @@ router.get('/:id/backup', async (req, res) => {
       fs.copyFileSync(metaFile, `${tmpBackupDir}/.serverdash.json`)
     }
 
-    // 5. Zip up the entire backup folder
+    // 5. Zip up the entire backup folder inside 0700 staging
     await execAsync(`cd ${shellQuote(tmpBackupDir)} && zip -r "${zipPath}" .`)
+    try { fs.chmodSync(zipPath, 0o600) } catch {}
 
-    // Clean up temporary workspace directory
-    await execAsync(`rm -rf "${tmpBackupDir}"`)
+    // Clean up temporary content directory
+    fs.rmSync(tmpBackupDir, { recursive: true, force: true })
 
     // 6. Serve the zip download
-    res.download(zipPath, `${domain}-full-backup.zip`, async (err) => {
-      // Cleanup the generated zip file after download finishes
-      await execAsync(`rm -f "${zipPath}"`).catch(() => {})
+    res.download(zipPath, `${domain}-full-backup.zip`, () => {
+      // Cleanup the generated staging folder after download finishes
+      try { fs.rmSync(stagingDir, { recursive: true, force: true }) } catch {}
     })
   } catch (err) {
+    if (stagingDir) {
+      try { fs.rmSync(stagingDir, { recursive: true, force: true }) } catch {}
+    }
     res.status(500).json({ error: err.message })
   }
 })
@@ -2673,8 +2875,9 @@ router.post('/restore', upload.single('backupZip'), async (req, res) => {
       domain = (conf.match(/server_name\s+([^;]+);/) || [])[1]?.trim().split(/\s+/)[0]
     }
 
+    domain = String(domain || '').trim().toLowerCase().replace(/[^a-z0-9.-]/g, '')
     if (!domain) {
-      domain = `restored-site-${Date.now()}.com`
+      domain = `restored-site-${Date.now()}.local`
     }
 
     // 3. Restore Nginx Configuration
@@ -2786,13 +2989,13 @@ router.get('/:id/scripts', async (req, res) => {
   res.json({ scripts })
 })
 
-// ── GET /api/sites/:id/exec-stream ─────────────────────────────────────────────
-router.get('/:id/exec-stream', async (req, res) => {
+// ── POST / GET /api/sites/:id/exec-stream (SD-01) ──────────────────────────────
+const handleSiteExecStream = async (req, res) => {
   const site = resolveSiteRoot(req.params.id)
   if (!site || !site.root) return res.status(404).end()
   
-  const { command } = req.query
-  if (!command) return res.status(400).end()
+  const command = req.body?.command || req.query?.command
+  if (!command || typeof command !== 'string') return res.status(400).end()
 
   const blocked = [
     'rm -rf /', 'dd if=/dev/zero', 'mkfs', '> /dev/sda', 'format c:',
@@ -2815,6 +3018,7 @@ router.get('/:id/exec-stream', async (req, res) => {
   child.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
   child.on('close', code => { send(`Exit: ${code}`); res.end() })
   req.on('close', () => child.kill())
-})
+}
+router.post('/:id/exec-stream', handleSiteExecStream)
 
 module.exports = router

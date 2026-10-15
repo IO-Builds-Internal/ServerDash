@@ -39,7 +39,7 @@ router.get('/server-info', (req, res) => {
   const os = require('os')
   let hostname = os.hostname() || 'localhost'
   
-  let ip = '207.180.243.219' // Fallback to your VPS IP
+  let ip = process.env.VPS_HOST || '127.0.0.1'
   try {
     const nets = os.networkInterfaces()
     let found = false
@@ -97,7 +97,7 @@ router.post('/test', async (req, res) => {
       port: smtpConfig.port || 587,
       secure: smtpConfig.encryption === 'SSL',
       auth: { user: smtpConfig.username, pass: smtpConfig.password },
-      tls: smtpConfig.encryption === 'TLS' ? { rejectUnauthorized: false } : undefined,
+      tls: smtpConfig.encryption === 'TLS' ? { rejectUnauthorized: smtpConfig.rejectUnauthorized === false ? false : true } : undefined,
     })
 
     await transporter.sendMail({
@@ -316,6 +316,10 @@ router.post('/accounts/create', async (req, res) => {
     return res.status(400).json({ error: 'username and password required' })
   }
 
+  if (/[\r\n\0]/.test(password)) {
+    return res.status(400).json({ error: 'Password cannot contain newline or null characters.' })
+  }
+
   const cleanUser = username.toLowerCase().replace(/[^a-z0-9_-]/g, '')
   if (cleanUser.length < 2) {
     return res.status(400).json({ error: 'invalid username' })
@@ -329,15 +333,22 @@ router.post('/accounts/create', async (req, res) => {
       userExists = true
     } catch {}
 
-    // 2. Create user if not exists
+    // 2. Create user if not exists (SD-09: nologin shell)
     if (!userExists) {
       logger.info(`Creating system user: ${cleanUser}`)
-      await execAsync(`useradd -m -s /bin/bash ${cleanUser}`)
+      await execAsync(`useradd -m -s /usr/sbin/nologin ${cleanUser}`)
     }
 
-    // 3. Set password
+    // 3. Set password safely via stdin (SD-05)
     logger.info(`Setting password for system user: ${cleanUser}`)
-    await execAsync(`echo "${cleanUser}:${password}" | chpasswd`)
+    const { spawn } = require('child_process')
+    const chpass = spawn('chpasswd')
+    chpass.stdin.write(`${cleanUser}:${password}\n`)
+    chpass.stdin.end()
+    await new Promise((resolve, reject) => {
+      chpass.on('close', code => code === 0 ? resolve() : reject(new Error(`chpasswd exited with code ${code}`)))
+      chpass.on('error', reject)
+    })
 
     // 4. Set up Maildir structure
     logger.info(`Setting up Maildir for user: ${cleanUser}`)

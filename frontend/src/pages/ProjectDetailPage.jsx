@@ -10,6 +10,8 @@ import {
 import { localAuth } from '../lib/auth'
 import api, { API_BASE as API_URL, authFetch } from '../lib/api'
 
+const safeHref = (url) => /^https?:\/\//i.test(String(url || '').trim()) ? String(url).trim() : '#'
+
 function CopyButton({ text }) {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -632,12 +634,12 @@ export default function ProjectDetailPage() {
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {project.apiUrl && (
-              <a href={project.apiUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: '0.82rem', height: 36 }}>
+              <a href={safeHref(project.apiUrl)} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: '0.82rem', height: 36 }}>
                 <Globe size={14}/> API Gateway <ExternalLink size={12} style={{ opacity: 0.7 }}/>
               </a>
             )}
             {project.studioUrl && (
-              <a href={project.studioUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: '0.82rem', height: 36 }}>
+              <a href={safeHref(project.studioUrl)} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: '0.82rem', height: 36 }}>
                 <Server size={14}/> Supabase Studio <ExternalLink size={12} style={{ opacity: 0.7 }}/>
               </a>
             )}

@@ -9,7 +9,7 @@
 ![React](https://img.shields.io/badge/React-19-61dafb.svg)
 ![Tailwind](https://img.shields.io/badge/Tailwind-v4-38bdf8.svg)
 ![Auth](https://img.shields.io/badge/Auth-Apple_Passkey_(WebAuthn)-purple.svg)
-![Security](https://img.shields.io/badge/Security-Hardened_Jail-success.svg)
+![Security](https://img.shields.io/badge/Security-Root_Admin_Control_Plane-indigo.svg)
 
 **A high-performance, self-hosted VPS management dashboard. Manage websites, Docker stacks, firewalls, analytics, backups, files, packages, and services from a premium minimalist workspace protected by Apple Passkey authentication.**
 
@@ -26,7 +26,7 @@
 | **📊 Overview & Telemetry** | Real-time CPU, RAM, NVMe disk, and network throughput telemetry with historical sparklines, process table, and core utilization visualizers. |
 | **🌐 Websites & Nginx** | Deploy Node.js (PM2), static HTML/JS, or PHP (WordPress/Laravel) applications with automatic virtual host configuration and automated Let's Encrypt SSL via Certbot. |
 | **🛡️ Firewall (UFW)** | Interactive UFW firewall manager. Add, toggle, and delete rules with strict port/IP sanitization and safe port-22 recovery guards. |
-| **📂 Filesystem Security Jail** | File manager with multi-root allowed jailing (`/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, `/tmp`). Features symlink traversal dereferencing and native Node.js filesystem operations. |
+| **📂 Scoped Filesystem Explorer** | Scoped directory navigation across administrative roots (`/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, `/tmp`). Features symlink traversal dereferencing and native Node.js filesystem operations. |
 | **🐳 Docker Apps & Compose** | Container management dashboard showing real-time CPU/RAM limits, lifecycle operations (start/stop/restart/remove), Docker Compose stacks, and live SSE log streams. |
 | **📦 Snapshots & Backups** | High-speed VPS snapshots with `rsync` exclusion, storage gauges, automatic cleanup, and one-click full server restoration (Nginx + www + MySQL). |
 | **⚡ Software Runtimes** | Monitor installed system runtimes (Node.js, Docker, Nginx, MariaDB), check upstream updates, and stream live command executions. |
@@ -200,22 +200,29 @@ ServerDash/
 
 ## 🔒 Security Architecture
 
-1. **Apple Passkeys & WebAuthn:**
+1. **Root Administrator Control Plane:**
+   - ServerDash is a root-level VPS management console. Because it administers low-level host services (Nginx, UFW, PM2, Docker, Postfix, APT), backend daemon processes run with elevated host privileges.
+   - The primary security boundary is the hardware-bound Apple Passkey authentication barrier and cryptographic cookie session.
+2. **Apple Passkeys & WebAuthn:**
    - Platform authenticator required (`authenticatorAttachment: "platform"`).
+   - Initial setup requires a one-time cryptographic `SETUP_TOKEN` generated during installation, preventing trust-on-first-use registration race conditions.
    - Touch ID / Face ID hardware-bound authentication stored in iCloud Keychain.
    - Replay protection with strict `sign_count` tracking.
-   - **Single-Admin Lockout:** The first registration permanently locks the endpoint (`403 Forbidden`).
-2. **Session Security:**
-   - 256-bit cryptographically secure session tokens stored in SQLite (`admin_sessions`).
-   - Cookies configured with `httpOnly`, `SameSite=Lax`, and `Secure` (in production).
-3. **Filesystem Jail:**
-   - Restricted strictly to `/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, and `/tmp`.
-   - Resolves symlinks via `fs.realpathSync()` to block directory traversal into `/etc/shadow`, `/root/.ssh`, or system files.
-   - Uses native Node.js filesystem calls (`fs.rmSync`, `fs.cpSync`) instead of shell string interpolation.
-4. **CORS Enforcement:**
-   - Wildcard DNS support (`*.sslip.io`, `*.nip.io`) and host validation. Unlisted external origins are rejected with errors.
-5. **Rate Limiting:**
-   - Global rate limiter (120 req/min) and dedicated console execution limiter (10 req/min).
+   - **Single-Admin Lockout:** The first registration permanently locks setup (`403 Forbidden`).
+3. **Session Security & CSRF Defense:**
+   - 256-bit CSPRNG session tokens hashed via SHA-256 in SQLite (`admin_sessions`).
+   - Cookies configured with `httpOnly`, `SameSite=Strict`, and `Secure` (in production).
+   - Strict `Sec-Fetch-Site` and `Origin` verification across all `/api` endpoints.
+   - State-changing management operations require authenticated `POST` requests.
+4. **Filesystem Explorer & Command Execution:**
+   - Scoped directory views across administrative roots (`/var/www`, `/etc/nginx`, `/var/log`, `/var/backups`, `/tmp`).
+   - Resolves symlinks via `fs.realpathSync()` to prevent unintended directory traversal.
+   - Core administrative dispatchers utilize argument arrays (`execFile` / `spawn`) with strict parameter sanitization to prevent command injection. Streaming console endpoints require authenticated POST sessions and CSRF verification.
+5. **Exact-Match CORS Enforcement:**
+   - Strict exact-match origin validation (`ALLOWED_ORIGIN`, `VPS_HOST`, and loopback). Wildcard or substring origin spoofing is rejected.
+6. **Rate Limiting & Dotfile Protection:**
+   - Dedicated authentication rate limiter (30 req / 15 min), global API rate limiter (120 req/min), and command execution limiter.
+   - All generated Nginx virtual hosts automatically enforce dotfile access denial (`location ~ /\.(?!well-known) { deny all; }`), preventing `.env` and `.git` leakage.
 
 ---
 

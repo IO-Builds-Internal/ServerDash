@@ -1,8 +1,9 @@
 const express = require('express')
 const router = express.Router()
-const { exec } = require('child_process')
+const { exec, execFile } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const fs = require('fs')
 const path = require('path')
 const logger = require('../logger')
@@ -156,14 +157,31 @@ router.post('/users', async (req, res) => {
     return res.status(400).json({ error: 'Username, password, and bound directory are required.' })
   }
 
-  // Validate directory existence
-  if (!fs.existsSync(directory)) {
+  // Validate directory existence and ensure safe web/user path strictly BELOW base (SD-21, D)
+  let realDir
+  try {
+    realDir = fs.realpathSync(path.resolve(directory))
+    if (!fs.statSync(realDir).isDirectory()) {
+      return res.status(400).json({ error: `Target path is not a directory: ${directory}` })
+    }
+  } catch {
     return res.status(400).json({ error: `Bound path directory does not exist: ${directory}` })
+  }
+
+  const safeBasePaths = ['/var/www/', '/home/']
+  const isSafeDir = safeBasePaths.some(base => realDir.startsWith(base) && realDir.length > base.length)
+  if (!isSafeDir) {
+    return res.status(400).json({ error: 'FTP user cannot be bound to base system directories. Target must be strictly inside a subdirectory of /var/www or /home.' })
   }
 
   // Validate username constraint (alphanumeric only, 3-20 chars)
   if (!/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
     return res.status(400).json({ error: 'Username must be alphanumeric, between 3 to 20 characters.' })
+  }
+
+  // Prevent newline injection in chpasswd (Problem A)
+  if (/[\r\n\0]/.test(password)) {
+    return res.status(400).json({ error: 'Password cannot contain newline or null characters.' })
   }
 
   try {
@@ -174,7 +192,7 @@ router.post('/users', async (req, res) => {
     }
 
     try {
-      await execAsync(`getent passwd ${username}`)
+      await execFileAsync('getent', ['passwd', username])
       return res.status(400).json({ error: `System user already exists on the VPS: ${username}` })
     } catch {
       // User is available, proceed
@@ -182,21 +200,28 @@ router.post('/users', async (req, res) => {
 
     // Ensure ftpusers group exists
     try {
-      await execAsync('getent group ftpusers')
+      await execFileAsync('getent', ['group', 'ftpusers'])
     } catch {
-      await execAsync('groupadd ftpusers')
+      await execFileAsync('groupadd', ['ftpusers'])
     }
 
     // Create system user locked into directory, with no shell (nologin)
-    logger.info(`Creating FTP system user ${username} bound to ${directory}`)
-    await execAsync(`useradd -d "${directory}" -s /usr/sbin/nologin -g ftpusers -M "${username}"`)
+    logger.info(`Creating FTP system user ${username} bound to ${realDir}`)
+    await execFileAsync('useradd', ['-d', realDir, '-s', '/usr/sbin/nologin', '-g', 'ftpusers', '-M', username])
 
-    // Set the password
-    await execAsync(`echo "${username}:${password}" | chpasswd`)
+    // Set the password safely via stdin (SD-05, A)
+    const { spawn } = require('child_process')
+    const chpass = spawn('chpasswd')
+    chpass.stdin.write(`${username}:${password}\n`)
+    chpass.stdin.end()
+    await new Promise((resolve, reject) => {
+      chpass.on('close', code => code === 0 ? resolve() : reject(new Error(`chpasswd failed with code ${code}`)))
+      chpass.on('error', reject)
+    })
 
     // Grant read/write ownership of directory to the FTP user
-    await execAsync(`chown -R ${username}:ftpusers "${directory}"`)
-    await execAsync(`chmod -R u+rwX,g+rwX "${directory}"`)
+    await execFileAsync('chown', ['-R', `${username}:ftpusers`, realDir])
+    await execFileAsync('chmod', ['-R', 'u+rwX,g+rwX', realDir])
 
     // Save to local database
     const newAcc = {
@@ -218,13 +243,20 @@ router.post('/users', async (req, res) => {
 router.post('/users/password', async (req, res) => {
   const { username, password } = req.body
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required.' })
+  if (!username || !password || !/^[a-zA-Z0-9_-]{3,20}$/.test(username) || /[\r\n\0]/.test(password)) {
+    return res.status(400).json({ error: 'Valid username and password (without newlines) are required.' })
   }
 
   try {
-    await execAsync(`getent passwd ${username}`)
-    await execAsync(`echo "${username}:${password}" | chpasswd`)
+    await execFileAsync('getent', ['passwd', username])
+    const { spawn } = require('child_process')
+    const chpass = spawn('chpasswd')
+    chpass.stdin.write(`${username}:${password}\n`)
+    chpass.stdin.end()
+    await new Promise((resolve, reject) => {
+      chpass.on('close', code => code === 0 ? resolve() : reject(new Error(`chpasswd failed with code ${code}`)))
+      chpass.on('error', reject)
+    })
     res.json({ success: true, message: `Password for FTP account '${username}' successfully updated.` })
   } catch (err) {
     res.status(500).json({ error: `Failed to change password: ${err.message}` })
@@ -234,12 +266,15 @@ router.post('/users/password', async (req, res) => {
 // ── DELETE /api/ftp/users/:username ────────────────────────────────────────────
 router.delete('/users/:username', async (req, res) => {
   const username = req.params.username
+  if (!username || !/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
+    return res.status(400).json({ error: 'Invalid username format.' })
+  }
 
   try {
     logger.info(`Deleting FTP user account: ${username}`)
     // Delete Linux system user, keeping target files completely safe
     try {
-      await execAsync(`userdel ${username}`)
+      await execFileAsync('userdel', [username])
     } catch (e) {
       logger.warn(`User ${username} did not exist in system passwd or could not be deleted`, { error: e.message })
     }

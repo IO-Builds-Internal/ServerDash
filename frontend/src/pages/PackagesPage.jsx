@@ -205,16 +205,16 @@ export default function PackagesPage() {
   }, [tab])
 
   const install = (pkg) => {
-    stream(`${BASE}/api/packages/stream?pkg=${encodeURIComponent(pkg)}`)
+    stream(`${BASE}/api/packages/stream`, 'POST', { pkg })
   }
 
   const remove = (pkg) => {
     if (!confirm(`Are you sure you want to uninstall ${pkg} from this server?`)) return
-    stream(`${BASE}/api/packages/stream?pkg=${encodeURIComponent(pkg)}&action=remove`)
+    stream(`${BASE}/api/packages/stream`, 'POST', { pkg, action: 'remove' })
   }
 
   const aptUpdate = () => {
-    stream(`${BASE}/api/packages/update`)
+    stream(`${BASE}/api/packages/update`, 'POST')
   }
 
   const uploadZip = async (e) => {
@@ -236,12 +236,12 @@ export default function PackagesPage() {
 
   const execStream = () => {
     if (!command.trim()) return
-    stream(`${BASE}/api/packages/exec-stream?command=${encodeURIComponent(command)}`)
+    stream(`${BASE}/api/packages/exec-stream`, 'POST', { command })
   }
 
   const installGitPackage = () => {
     if (!gitRepoUrl.trim()) return
-    stream(`${BASE}/api/packages/git-install?repoUrl=${encodeURIComponent(gitRepoUrl.trim())}&dest=${encodeURIComponent(gitDest.trim())}`)
+    stream(`${BASE}/api/packages/git-install`, 'POST', { repoUrl: gitRepoUrl.trim(), dest: gitDest.trim() })
   }
 
   const filteredInstalled = installed.filter(p =>
@@ -737,7 +737,7 @@ export default function PackagesPage() {
                   <div style={{ marginTop: 10, display: 'flex', gap: 12 }}>
                     <button
                       className="btn btn-primary"
-                      onClick={() => stream(`${BASE}/api/packages/serverdash-update/run`)}
+                      onClick={() => stream(`${BASE}/api/packages/serverdash-update/run`, 'POST')}
                       disabled={running}
                       style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '10px 18px', fontSize: '0.88rem' }}
                     >

@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 import FilesPage from './FilesPage'
 
+const safeHref = (url) => /^https?:\/\//i.test(String(url || '').trim()) ? String(url).trim() : '#'
+
 export default function SiteDetailPage() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -29,6 +31,7 @@ export default function SiteDetailPage() {
   const [gitError, setGitError] = useState(null)
   const [autoDeployEnabled, setAutoDeployEnabled] = useState(true)
   const [autoDeployUpdating, setAutoDeployUpdating] = useState(false)
+  const [webhookSecret, setWebhookSecret] = useState('')
 
   // Build Settings State
   const [buildSettings, setBuildSettings] = useState({
@@ -423,6 +426,7 @@ export default function SiteDetailPage() {
       ])
       setGitData(gitRes.data)
       setAutoDeployEnabled(autoRes.data.autoDeployEnabled)
+      setWebhookSecret(autoRes.data.webhookSecret || '')
     } catch (e) {
       setGitError(e.response?.data?.error || e.message)
     } finally {
@@ -659,7 +663,11 @@ export default function SiteDetailPage() {
     setSiteTermLogs(prev => [...prev, `$ ${commandToRun}`])
     
     try {
-      const resp = await authFetch(`/api/sites/${id}/exec-stream?command=${encodeURIComponent(commandToRun)}`)
+      const resp = await authFetch(`/api/sites/${id}/exec-stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: commandToRun })
+      })
       const reader = resp.body.getReader()
       const dec = new TextDecoder()
       let buf = ''
@@ -996,7 +1004,7 @@ export default function SiteDetailPage() {
                         Connected repository branch: <code style={{ color:'var(--color-success)', background:'rgba(16, 185, 129, 0.08)', padding:'2px 6px', borderRadius:4 }}>{gitData.branch}</code>
                       </div>
                       <div style={{ fontSize:'0.8rem', color:'var(--color-text-muted)', marginTop:4, wordBreak:'break-all' }}>
-                        URL: <a href={gitData.repoUrl} target="_blank" rel="noopener noreferrer" style={{ color:'var(--color-primary)', textDecoration:'none' }}>{gitData.repoUrl}</a>
+                        URL: <a href={safeHref(gitData.repoUrl)} target="_blank" rel="noopener noreferrer" style={{ color:'var(--color-primary)', textDecoration:'none' }}>{gitData.repoUrl}</a>
                       </div>
                     </div>
                   </div>
@@ -1599,28 +1607,52 @@ export default function SiteDetailPage() {
                 )}
 
                 {/* Vercel-like Git Deployment Webhook */}
-                <div style={{ display:'flex', flexDirection:'column', gap:8, padding:18, background:'rgba(255,255,255,0.01)', border:'1px dashed var(--color-border)', borderRadius:12 }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:12, padding:18, background:'rgba(255,255,255,0.01)', border:'1px dashed var(--color-border)', borderRadius:12 }}>
                   <div style={{ display:'flex', alignItems:'center', gap:6, fontWeight:700, fontSize:'0.88rem' }}>
                     <Globe size={14} color="var(--color-primary)"/> Continuous Deployment Webhook
                   </div>
                   <p style={{ margin:0, fontSize:'0.8rem', color:'var(--color-text-muted)', lineHeight:1.5 }}>
-                    Copy this URL and paste it into your GitHub/GitLab Repository settings under <strong>Webhooks</strong> (Event: Push) to trigger instantaneous builds on git push:
+                    Copy this URL and Secret into your GitHub/GitLab Repository settings under <strong>Webhooks</strong> (Event: Push, Content type: application/json) to trigger continuous builds:
                   </p>
-                  <div style={{ display:'flex', gap:8, marginTop:4 }}>
-                    <input 
-                      type="text" 
-                      readOnly 
-                      className="input" 
-                      style={{ fontSize:'0.75rem', fontFamily:'var(--font-mono)', padding:'8px 12px' }}
-                      value={`${window.location.protocol}//${window.location.hostname}:4001/api/sites/${id}/webhook`}
-                    />
-                    <button className="btn btn-secondary btn-sm" onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.protocol}//${window.location.hostname}:4001/api/sites/${id}/deploy`)
-                      alert('Webhook URL copied!')
-                    }}>
-                      <Copy size={13}/> Copy
-                    </button>
+                  <div>
+                    <label style={{ display:'block', fontSize:'0.75rem', color:'var(--color-text-muted)', marginBottom:4 }}>Webhook Payload URL</label>
+                    <div style={{ display:'flex', gap:8 }}>
+                      <input 
+                        type="text" 
+                        readOnly 
+                        className="input" 
+                        style={{ fontSize:'0.75rem', fontFamily:'var(--font-mono)', padding:'8px 12px' }}
+                        value={`${window.location.origin}/api/sites/${id}/webhook`}
+                      />
+                      <button className="btn btn-secondary btn-sm" onClick={() => {
+                        navigator.clipboard.writeText(`${window.location.origin}/api/sites/${id}/webhook`)
+                        alert('Webhook URL copied!')
+                      }}>
+                        <Copy size={13}/> Copy
+                      </button>
+                    </div>
                   </div>
+
+                  {webhookSecret && (
+                    <div>
+                      <label style={{ display:'block', fontSize:'0.75rem', color:'var(--color-text-muted)', marginBottom:4 }}>Webhook Secret (HMAC-SHA256)</label>
+                      <div style={{ display:'flex', gap:8 }}>
+                        <input 
+                          type="text" 
+                          readOnly 
+                          className="input" 
+                          style={{ fontSize:'0.75rem', fontFamily:'var(--font-mono)', padding:'8px 12px' }}
+                          value={webhookSecret}
+                        />
+                        <button className="btn btn-secondary btn-sm" onClick={() => {
+                          navigator.clipboard.writeText(webhookSecret)
+                          alert('Webhook Secret copied!')
+                        }}>
+                          <Copy size={13}/> Copy
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Commit History & Rollback Console */}

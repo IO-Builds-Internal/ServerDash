@@ -29,7 +29,7 @@ const navItems = [
 
 export default function Sidebar({ connected = true }) {
   const [collapsed, setCollapsed] = useState(false)
-  const { user, signOut } = useAuth()
+  const { user, signOut, pendingCount } = useAuth()
   const { branding } = useBranding()
   const { theme, toggleTheme } = useTheme()
   const navigate = useNavigate()
@@ -147,15 +147,46 @@ export default function Sidebar({ connected = true }) {
           >
             {({ isActive }) => (
               <>
-                <Icon size={18} style={{ flexShrink: 0, color: isActive ? 'var(--color-primary)' : 'inherit' }} />
+                <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                  <Icon size={18} style={{ flexShrink: 0, color: isActive ? 'var(--color-primary)' : 'inherit' }} />
+                  {collapsed && path === '/settings' && pendingCount > 0 && (
+                    <span style={{
+                      position: 'absolute',
+                      top: -4,
+                      right: -4,
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: 'var(--color-warning)',
+                      boxShadow: '0 0 6px var(--color-warning)',
+                    }} />
+                  )}
+                </div>
                 {!collapsed && (
                   <span style={{
                     fontSize: '0.875rem',
                     fontWeight: 500,
                     whiteSpace: 'nowrap',
                     overflow: 'hidden',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
                   }}>
-                    {label}
+                    <span>{label}</span>
+                    {path === '/settings' && pendingCount > 0 && (
+                      <span style={{
+                        background: '#f59e0b',
+                        color: '#000',
+                        fontSize: '0.68rem',
+                        fontWeight: 800,
+                        padding: '1px 6px',
+                        borderRadius: 10,
+                        marginLeft: 8,
+                      }}>
+                        {pendingCount}
+                      </span>
+                    )}
                   </span>
                 )}
               </>
@@ -192,11 +223,11 @@ export default function Sidebar({ connected = true }) {
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: 'var(--color-success)',
-                boxShadow: '0 0 6px var(--color-success)',
+                background: user?.role === 'view_only' ? 'var(--color-warning)' : 'var(--color-success)',
+                boxShadow: `0 0 6px ${user?.role === 'view_only' ? 'var(--color-warning)' : 'var(--color-success)'}`,
                 display: 'inline-block'
               }} />
-              <span>Admin (Passkey)</span>
+              <span>{user?.username || 'Admin'} ({user?.role === 'view_only' ? 'View Only' : 'Admin'})</span>
             </div>
           )}
           {!collapsed ? (

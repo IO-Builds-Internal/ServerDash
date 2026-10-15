@@ -30,12 +30,11 @@ const SETTINGS_FILE = path.join(__dirname, '../../data/settings.json')
 // Consider narrowing to 'repo' or even 'public_repo' if private repos not needed.
 const GITHUB_SCOPE = 'repo,read:user'
 
-// ── Encryption helpers ───────────────────────────────────────────────────────
-// Key is derived from LOCAL_JWT_SECRET so it is never hardcoded.
-// TODO(security): Rotate encryption key when LOCAL_JWT_SECRET changes.
+// ── Encryption helpers (SD-08) ───────────────────────────────────────────────
+// Key is derived from SETTINGS_ENC_KEY or COOKIE_SECRET so it is never hardcoded.
 function getEncKey() {
-  const secret = process.env.LOCAL_JWT_SECRET
-  if (!secret) throw new Error('LOCAL_JWT_SECRET not set — cannot encrypt GitHub token')
+  const secret = process.env.SETTINGS_ENC_KEY || process.env.COOKIE_SECRET
+  if (!secret) throw new Error('Encryption secret not set — cannot encrypt GitHub token')
   return crypto.scryptSync(secret, 'serverdash-github-token-v1', 32)
 }
 
@@ -372,31 +371,8 @@ router.get('/repos/:owner/:repo/branches', async (req, res) => {
   }
 })
 
-/**
- * GET /api/github/token-for-url
- * Internal: given a git URL, returns the stored token as a Basic auth header string
- * if the URL is a GitHub URL and we have a stored token.
- * Used by sites.js to auto-inject tokens for GitHub deploys.
- * Returns { hasToken: false } or { hasToken: true, token: '...' }
- * NOTE: token IS returned here — only consumed by backend, never forwarded to frontend.
- */
-router.get('/token-for-url', (req, res) => {
-  const url = String(req.query.url || '')
-  if (!url.includes('github.com')) {
-    return res.json({ hasToken: false })
-  }
-  const gh = getGithubSection()
-  if (!gh.connected || !gh.encryptedToken) {
-    return res.json({ hasToken: false })
-  }
-  try {
-    const token = decryptToken(gh.encryptedToken)
-    res.json({ hasToken: true, token, login: gh.login })
-  } catch (e) {
-    logger.error('github: token decryption failed', { error: e.message })
-    res.json({ hasToken: false })
-  }
-})
+// SD-17: /token-for-url route removed to prevent exfiltration.
+// Only internal backend function getStoredGithubToken is used by sites.js.
 
 module.exports = router
 module.exports.getStoredGithubToken = function (gitUrl) {

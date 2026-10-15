@@ -8,6 +8,13 @@ const execAsync = promisify(exec)
 const logger = require('../logger')
 
 const BACKUP_DIR = '/var/backups/serverdash'
+try {
+  if (!fs.existsSync(BACKUP_DIR)) {
+    fs.mkdirSync(BACKUP_DIR, { recursive: true, mode: 0o700 })
+  } else {
+    fs.chmodSync(BACKUP_DIR, 0o700)
+  }
+} catch {}
 
 function getAvailableStorage() {
   try {
@@ -76,7 +83,8 @@ router.post('/', async (req, res) => {
   const tempDir = `/tmp/sd-snap-${Date.now()}`
 
   try {
-    // 1. Create temporary directory
+    // 1. Create temporary directory with restricted permissions (SD-07)
+    fs.mkdirSync(tempDir, { recursive: true, mode: 0o700 })
     fs.mkdirSync(`${tempDir}/nginx`, { recursive: true })
     fs.mkdirSync(`${tempDir}/www`, { recursive: true })
     fs.mkdirSync(`${tempDir}/db`, { recursive: true })
@@ -92,9 +100,10 @@ router.post('/', async (req, res) => {
       await execAsync(`rsync -a --exclude="node_modules" /var/www/ "${tempDir}/www/"`).catch(() => {})
     }
 
-    // 4. Backup internal ServerDash metadata lists
-    if (fs.existsSync('/root/ServerDash/backend/data')) {
-      await execAsync(`cp -r /root/ServerDash/backend/data/* "${tempDir}/data/"`).catch(() => {})
+    // 4. Backup ServerDash metadata (excluding auth.db sessions and setup tokens - SD-07)
+    const backendDataDir = path.join(__dirname, '..', '..', 'data')
+    if (fs.existsSync(backendDataDir)) {
+      await execAsync(`rsync -a --exclude="auth.db*" --exclude=".setup_token" "${backendDataDir}/" "${tempDir}/data/"`).catch(() => {})
     }
 
     // 5. Backup MySQL/MariaDB database dump
@@ -104,8 +113,9 @@ router.post('/', async (req, res) => {
       logger.error('MariaDB dump failed during server snapshot', { error: dbErr.message })
     }
 
-    // 6. Compress everything into a tarball
+    // 6. Compress everything into a tarball and restrict permissions
     await execAsync(`cd "${tempDir}" && tar -czf "${targetPath}" .`)
+    try { fs.chmodSync(targetPath, 0o600) } catch {}
 
     // Cleanup temporary workspace
     await execAsync(`rm -rf "${tempDir}"`)

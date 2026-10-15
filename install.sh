@@ -72,18 +72,48 @@ if [ ! -d "$SD_DIR" ]; then
   git clone https://github.com/IO-Builds-Internal/ServerDash.git "$SD_DIR"
 fi
 
-# 7. Generate Secure Passkey Configuration
-echo -e "\n🔒 Generating secure cookie session configuration..."
-COOKIE_SECRET=$(openssl rand -hex 32)
+# Parse optional domain from argument or environment
+PANEL_DOMAIN="${1:-${PANEL_DOMAIN:-}}"
+if [ -t 0 ] && [ -z "$PANEL_DOMAIN" ]; then
+  read -r -p "Enter custom domain for ServerDash (optional, e.g. panel.example.com): " INPUT_DOMAIN
+  PANEL_DOMAIN=$(echo "$INPUT_DOMAIN" | tr -d '[:space:]')
+fi
 
-# Write Backend Environment Config
+# 7. Generate Secure Passkey Configuration
+echo -e "\n🔒 Generating secure cookie session and encryption keys..."
+COOKIE_SECRET=$(openssl rand -hex 32)
+SETUP_TOKEN=$(openssl rand -hex 16)
+SETTINGS_ENC_KEY=$(openssl rand -hex 32)
+
+if [ -n "$PANEL_DOMAIN" ]; then
+  PRIMARY_ORIGIN="https://$PANEL_DOMAIN"
+  PANEL_HOST="$PANEL_DOMAIN"
+  NGINX_SERVER_NAME="$PANEL_DOMAIN"
+else
+  PRIMARY_ORIGIN="http://$IP_ADDRESS"
+  PANEL_HOST="$IP_ADDRESS"
+  NGINX_SERVER_NAME="_"
+fi
+
+# Write Backend Environment Config (restricted to 0600)
 cat <<EOF > "$SD_DIR/backend/.env"
+HOST=127.0.0.1
 PORT=4001
 NODE_ENV=production
 COOKIE_SECRET=$COOKIE_SECRET
+SETUP_TOKEN=$SETUP_TOKEN
+SETTINGS_ENC_KEY=$SETTINGS_ENC_KEY
 ALLOW_PASSKEY_RESET=false
-ALLOWED_ORIGIN=http://$IP_ADDRESS
+ALLOWED_ORIGIN=$PRIMARY_ORIGIN
+VPS_HOST=$PANEL_HOST
+RP_ID=$PANEL_HOST
 EOF
+chmod 600 "$SD_DIR/backend/.env"
+
+mkdir -p "$SD_DIR/backend/data"
+chmod 700 "$SD_DIR/backend/data"
+echo "$SETUP_TOKEN" > "$SD_DIR/backend/data/.setup_token"
+chmod 600 "$SD_DIR/backend/data/.setup_token"
 
 # Write Frontend Environment Config (for compilation build bindings)
 cat <<EOF > "$SD_DIR/frontend/.env"
@@ -112,30 +142,42 @@ chmod -R 755 /var/www/serverdash
 echo -e "\n🌐 Configuring Nginx reverse-proxy gateway..."
 NGINX_CONF="/etc/nginx/sites-available/serverdash"
 
-cat <<'EOF' > "$NGINX_CONF"
+cat <<EOF > "$NGINX_CONF"
 server {
     listen 80 default_server;
     listen [::]:80 default_server;
-    server_name _;
+    server_name $NGINX_SERVER_NAME;
 
     root /var/www/serverdash/dist;
     index index.html;
 
+    # Security Headers for SPA and API
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    # Block dotfiles
+    location ~ /\.(?!well-known) {
+        deny all;
+        return 404;
+    }
+
     location / {
-        try_files $uri $uri/ /index.html;
+        try_files \$uri \$uri/ /index.html;
     }
 
     location /api {
         proxy_pass http://127.0.0.1:4001;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-Host $host;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_cache_bypass $http_upgrade;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_cache_bypass \$http_upgrade;
         
         # Disable buffering for real-time SSE logs
         proxy_buffering off;
@@ -151,6 +193,12 @@ ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/serverdash
 # Restart Nginx
 systemctl restart nginx
 
+# If domain provided, obtain SSL certificate automatically
+if [ -n "$PANEL_DOMAIN" ]; then
+  echo -e "\n🔒 Provisioning Let's Encrypt SSL certificate for $PANEL_DOMAIN..."
+  certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email --redirect || echo -e "⚠️ Certbot could not auto-issue certificate. You can run 'certbot --nginx -d $PANEL_DOMAIN' manually."
+fi
+
 # 11. Run Backend Server under PM2 Daemon
 echo -e "\n⚡ Launching ServerDash Backend Process under PM2..."
 cd "$SD_DIR/backend"
@@ -159,14 +207,14 @@ pm2 start server.js --name "serverdash-backend"
 pm2 save
 pm2 startup | tail -n 1 | bash # Set up PM2 system startup persistence
 
-# 12. Adjust Firewall
-echo -e "\n🛡️ Adjusting firewall rules (allowing SSH, HTTP, HTTPS and panel ports)..."
+# 12. Adjust Firewall (loopback backend; only SSH and web traffic open)
+echo -e "\n🛡️ Adjusting firewall rules (allowing SSH, HTTP, HTTPS)..."
 if command -v ufw &> /dev/null; then
   ufw allow 22/tcp
   ufw allow 80/tcp
   ufw allow 443/tcp
-  ufw allow 4001/tcp
-  ufw allow 5173/tcp
+  ufw delete allow 4001/tcp 2>/dev/null || true
+  ufw delete allow 5173/tcp 2>/dev/null || true
   ufw --force enable
 fi
 
@@ -177,17 +225,38 @@ if [ ! -d "/opt/supabase-repo" ]; then
   git clone --depth 1 https://github.com/supabase/supabase.git /opt/supabase-repo
 fi
 
-# 14. Output Beautiful Setup Completion Dashboard
+# 14. Harden existing mailbox users to nologin shell
+if [ -f "/etc/passwd" ]; then
+  grep -E '^[^:]+_[^:]+:.*:/bin/bash$' /etc/passwd | cut -d: -f1 | while read -r mail_user; do
+    if [ -n "$mail_user" ]; then
+      usermod -s /usr/sbin/nologin "$mail_user" 2>/dev/null || true
+    fi
+  done
+fi
+
+# 15. Output Setup Completion Dashboard
 echo -e "\n\e[32m=========================================================="
 echo "    🎉 SERVERDASH PANEL INSTALLED SUCCESSFULLY! 🎉"
 echo "==========================================================\e[0m"
 echo ""
-echo -e "🌐 \e[1mPanel Access URL\e[0m:  \e[36mhttp://$IP_ADDRESS\e[0m"
+echo -e "🌐 \e[1mPanel Access URL\e[0m:  \e[36m$PRIMARY_ORIGIN\e[0m"
 echo -e "🔑 \e[1mAuthentication\e[0m:    \e[32mApple Passkey (Touch ID / Face ID / iCloud Keychain)\e[0m"
+echo -e "🔐 \e[1mSetup Token\e[0m:       \e[33m$SETUP_TOKEN\e[0m"
 echo ""
 echo "----------------------------------------------------------"
-echo -e "🛡️ \e[95mPasskey Setup Note\e[0m: Open the Panel Access URL in Safari on"
-echo "   your Mac, iPhone, or iPad to register your primary Passkey."
+echo -e "🛡️ \e[95mPasskey Setup Note\e[0m: Open the Panel Access URL in your browser to"
+echo "   register your primary Passkey. When prompted, enter your Setup Token:"
+echo -e "   \e[33m$SETUP_TOKEN\e[0m"
+echo "   (Required once to establish the initial root administrator)."
+if [ -z "$PANEL_DOMAIN" ]; then
+  echo ""
+  echo -e "⚠️  \e[33mNote on Plain IP Access & WebAuthn\e[0m:"
+  echo "   WebAuthn (Passkeys) requires a Secure Context (HTTPS or localhost)."
+  echo "   If your browser blocks Passkey registration over plain HTTP, point a domain"
+  echo "   to this IP, run 'certbot --nginx -d yourdomain.com', and update ALLOWED_ORIGIN"
+  echo "   and RP_ID in $SD_DIR/backend/.env."
+fi
+echo "=========================================================="
 echo "   Subsequent logins are unlocked via Touch ID or Face ID."
 echo "----------------------------------------------------------"
 echo -e "⚙️  \e[1mPM2 Utility Commands\e[0m:"

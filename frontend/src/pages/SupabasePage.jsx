@@ -12,6 +12,8 @@ import api, { authFetch } from '../lib/api'
 
 import { Dialog, Overlay } from '../components/Dialog'
 
+const safeHref = (url) => /^https?:\/\//i.test(String(url || '').trim()) ? String(url).trim() : '#'
+
 function SupabaseWizard({ onClose, onCreated }) {
   const [step, setStep] = useState(1)
   const [form, setForm] = useState({ name: '', dbPassword: '', dashPassword: '', publicUrl: '' })
@@ -1357,7 +1359,7 @@ export default function SupabasePage() {
                     <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: '0.8125rem', maxWidth: 600 }}>
                       <span style={{ color: 'var(--color-text-muted)' }}>API URL</span>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <a href={p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.apiUrl}</a>
+                        <a href={safeHref(p.apiUrl)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.apiUrl}</a>
                         <CopyButton text={p.apiUrl} />
                         {(() => {
                           const isBound = !(p.apiUrl.includes('127.0.0.1') || p.apiUrl.includes('localhost') || /:\d+$/.test(p.apiUrl.replace('http://', '').replace('https://', '')))
@@ -1402,7 +1404,7 @@ export default function SupabasePage() {
                         <>
                           <span style={{ color: 'var(--color-text-muted)' }}>Studio</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <a href={p.studioUrl || p.apiUrl} target="_blank" rel="noopener" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.studioUrl || p.apiUrl}</a>
+                            <a href={safeHref(p.studioUrl || p.apiUrl)} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--color-primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>{p.studioUrl || p.apiUrl}</a>
                             <CopyButton text={p.studioUrl || p.apiUrl} />
                           </div>
                         </>

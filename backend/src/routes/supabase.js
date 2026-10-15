@@ -1,13 +1,17 @@
 const express = require('express')
 const router = express.Router()
+const crypto = require('crypto')
 const ssh = require('../sshPool')
 const logger = require('../logger')
 const { v4: uuidv4 } = require('uuid')
 const multer = require('multer')
-const upload = multer({ dest: '/tmp/supabase-uploads/' })
+const upload = multer({
+  dest: '/tmp/supabase-uploads/',
+  limits: { fileSize: 500 * 1024 * 1024 }
+})
 const fs = require('fs')
 const path = require('path')
-const { execSync } = require('child_process')
+const { execSync, execFileSync } = require('child_process')
 
 // Helper function to cleanly sanitize SQL dump contents natively in Javascript
 const cleanSqlContent = (content) => {
@@ -118,13 +122,13 @@ const getServerIP = () => {
       }
     }
   } catch {}
-  return '207.180.243.219' // Fallback to your VPS IP
+  return process.env.VPS_HOST || '127.0.0.1'
 }
 
 // ── Persistence ────────────────────────────────────────────────────────────────
 const loadProjects = () => {
   try {
-    fs.mkdirSync(PROJECTS_DIR, { recursive: true })
+    fs.mkdirSync(PROJECTS_DIR, { recursive: true, mode: 0o700 })
     if (fs.existsSync(PROJECTS_FILE)) {
       return JSON.parse(fs.readFileSync(PROJECTS_FILE, 'utf8'))
     }
@@ -134,8 +138,9 @@ const loadProjects = () => {
 
 const saveProjects = (projects) => {
   try {
-    fs.mkdirSync(PROJECTS_DIR, { recursive: true })
-    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2))
+    fs.mkdirSync(PROJECTS_DIR, { recursive: true, mode: 0o700 })
+    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(projects, null, 2), { mode: 0o600 })
+    try { fs.chmodSync(PROJECTS_FILE, 0o600) } catch {}
   } catch (e) { logger.warn('Could not save projects', { error: e.message }) }
 }
 
@@ -821,7 +826,16 @@ router.post('/register', async (req, res) => {
   const { composePath, name } = req.body
   if (!composePath || !name) return res.status(400).json({ error: 'composePath and name required' })
 
-  const envPath = `${composePath}/.env`
+  if (typeof name !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(name)) {
+    return res.status(400).json({ error: 'Invalid project name. Alphanumeric, dash and underscore only (max 64 chars).' })
+  }
+
+  const resolvedComposePath = path.resolve(composePath)
+  if (!fs.existsSync(resolvedComposePath) || !fs.statSync(resolvedComposePath).isDirectory()) {
+    return res.status(400).json({ error: 'Invalid composePath: directory does not exist' })
+  }
+
+  const envPath = path.join(resolvedComposePath, '.env')
   if (!fs.existsSync(envPath)) return res.status(400).json({ error: `.env not found at ${envPath}` })
 
   try {
@@ -851,7 +865,7 @@ router.post('/register', async (req, res) => {
     } catch {}
 
     const projects = loadProjects()
-    const existing = projects.find(p => p.composePath === composePath)
+    const existing = projects.find(p => p.composePath === resolvedComposePath)
     if (existing) return res.status(409).json({ error: 'Project already registered', id: existing.id })
 
     const project = {
@@ -868,7 +882,7 @@ router.post('/register', async (req, res) => {
       dashboardPass: dashPass,
       status: 'running',
       created: new Date().toISOString(),
-      composePath,
+      composePath: resolvedComposePath,
       builtin: false,
     }
 
@@ -1076,13 +1090,18 @@ router.post('/:id/env-reveal', (req, res) => {
   if (!project) return res.status(404).json({ error: 'Project not found' })
   
   const { password } = req.body
-  const adminPass = process.env.ADMIN_PASSWORD || 'admin'
-  if (password !== adminPass) {
-    return res.status(401).json({ error: 'Invalid admin password' })
+  const adminPass = process.env.ADMIN_PASSWORD
+  if (adminPass) {
+    const pwBuffer = Buffer.from(String(password || ''))
+    const expBuffer = Buffer.from(String(adminPass))
+    if (pwBuffer.length !== expBuffer.length || !crypto.timingSafeEqual(pwBuffer, expBuffer)) {
+      return res.status(401).json({ error: 'Invalid admin password' })
+    }
   }
 
   try {
-    const content = fs.readFileSync(`${project.composePath}/.env`, 'utf8')
+    const envFile = path.join(path.resolve(project.composePath), '.env')
+    const content = fs.readFileSync(envFile, 'utf8')
     res.json({ content })
   } catch (e) {
     res.status(500).json({ error: e.message })
@@ -1341,9 +1360,14 @@ router.post('/:id/snapshots/:backupName/restore', async (req, res) => {
   const project = projects.find(p => p.id === req.params.id)
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
-  const { backupName } = req.params
+  const rawBackup = String(req.params.backupName || '').trim()
+  if (rawBackup.startsWith('.') || rawBackup.includes('..') || !/^[a-zA-Z0-9_-]{1,128}$/.test(rawBackup)) {
+    return res.status(400).json({ error: 'Invalid backup name format' })
+  }
+  const safeBackupName = rawBackup
+
   try {
-    const cmd = `/opt/supabase-projects/scripts/full_restore.sh "${project.composePath}" "${backupName}"`
+    const cmd = `/opt/supabase-projects/scripts/full_restore.sh "${project.composePath}" "${safeBackupName}"`
     const result = await ssh.exec(cmd, { timeout: 600000 })
     if (result.code === 0) {
       res.json({ success: true, message: 'Full physical snapshot restored successfully' })
@@ -1361,9 +1385,14 @@ router.delete('/:id/snapshots/:backupName', (req, res) => {
   const project = projects.find(p => p.id === req.params.id)
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
-  const { backupName } = req.params
+  const rawBackup = String(req.params.backupName || '').trim()
+  if (rawBackup.startsWith('.') || rawBackup.includes('..') || !/^[a-zA-Z0-9_-]{1,128}$/.test(rawBackup)) {
+    return res.status(400).json({ error: 'Invalid backup name format' })
+  }
+  const safeBackupName = rawBackup
+
   const backupsDir = `${project.composePath}/instance_backups`
-  const dirPath = path.join(backupsDir, path.basename(backupName))
+  const dirPath = path.join(backupsDir, safeBackupName)
   const zipPath = `${dirPath}.zip`
 
   try {
@@ -1385,13 +1414,18 @@ router.get('/:id/snapshots/:backupName/download', (req, res) => {
   const project = projects.find(p => p.id === req.params.id)
   if (!project) return res.status(404).json({ error: 'Project not found' })
 
-  const { backupName } = req.params
+  const rawBackup = String(req.params.backupName || '').trim()
+  if (rawBackup.startsWith('.') || rawBackup.includes('..') || !/^[a-zA-Z0-9_-]{1,128}$/.test(rawBackup)) {
+    return res.status(400).json({ error: 'Invalid backup name format' })
+  }
+  const safeBackupName = rawBackup
+
   const backupsDir = `${project.composePath}/instance_backups`
-  const zipPath = path.join(backupsDir, `${path.basename(backupName)}.zip`)
+  const zipPath = path.join(backupsDir, `${safeBackupName}.zip`)
 
   if (!fs.existsSync(zipPath)) return res.status(404).json({ error: 'Snapshot file not found' })
 
-  res.setHeader('Content-Disposition', `attachment; filename="${backupName}.zip"`)
+  res.setHeader('Content-Disposition', `attachment; filename="${safeBackupName}.zip"`)
   res.setHeader('Content-Type', 'application/zip')
   res.sendFile(zipPath)
 })
@@ -1421,6 +1455,14 @@ router.post('/:id/proxy', async (req, res) => {
     return res.status(400).json({ error: 'At least one domain must be provided' })
   }
 
+  const DOMAIN_REGEX = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
+  if (apiDomain && (!DOMAIN_REGEX.test(apiDomain) || apiDomain.includes('..'))) {
+    return res.status(400).json({ error: 'Invalid apiDomain format' })
+  }
+  if (studioDomain && (!DOMAIN_REGEX.test(studioDomain) || studioDomain.includes('..'))) {
+    return res.status(400).json({ error: 'Invalid studioDomain format' })
+  }
+
   const projects = loadProjects()
   const projectIndex = projects.findIndex(p => p.id === id)
   const builtin = detectBuiltinProject()
@@ -1440,6 +1482,12 @@ router.post('/:id/proxy', async (req, res) => {
     const nginxConf = `server {
     listen 80;
     server_name ${domain};
+
+    location ~ /\\.(?!well-known) {
+        deny all;
+        return 404;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:${port};
         proxy_http_version 1.1;
@@ -1457,9 +1505,9 @@ router.post('/:id/proxy', async (req, res) => {
     
     fs.writeFileSync(availablePath, nginxConf, 'utf8')
     try {
-      execSync(`ln -sf ${availablePath} ${enabledPath}`)
-      execSync('nginx -t')
-      execSync('systemctl reload nginx')
+      execFileSync('ln', ['-sf', availablePath, enabledPath])
+      execFileSync('nginx', ['-t'])
+      execFileSync('systemctl', ['reload', 'nginx'])
       results.push(`✓ Nginx reverse proxy configured for ${typeLabel} (${domain} -> :${port})`)
       return true
     } catch (e) {

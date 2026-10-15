@@ -13,79 +13,143 @@ const { authMiddleware } = require('./src/authMiddleware')
 const { startBackupScheduler } = require('./src/backupScheduler')
 
 
-// Ensure logs directory exists
-if (!fs.existsSync('logs')) fs.mkdirSync('logs')
+// Ensure logs directory exists with restricted permissions (SD-15)
+if (!fs.existsSync('logs')) fs.mkdirSync('logs', { recursive: true, mode: 0o700 })
 
 const app = express()
 const PORT = process.env.PORT || 4001
+const HOST = process.env.HOST || '127.0.0.1'
 
-// ─── Middleware ────────────────────────────────────────────────────────────────
-const allowedOrigins = [
-  process.env.ALLOWED_ORIGIN,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  `http://${require('os').hostname()}:5173`,
-].filter(Boolean)
+// Trust loopback proxy from local Nginx reverse proxy (SD-12)
+app.set('trust proxy', 'loopback')
+
+// ─── Security Headers (SD-16) ────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  next()
+})
+
+// ─── CORS Allowlist (SD-02: Exact-match Set) ──────────────────────────────────
+const allowedOriginsSet = new Set(
+  [
+    ...(process.env.ALLOWED_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean),
+    process.env.VPS_HOST ? `http://${process.env.VPS_HOST}` : null,
+    process.env.VPS_HOST ? `https://${process.env.VPS_HOST}` : null,
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:4001',
+    'http://127.0.0.1:4001',
+  ].filter(Boolean)
+)
 
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, server-to-server, same-origin GETs)
+    // Allow server-to-server or same-origin requests with no origin header
     if (!origin) return cb(null, true)
 
-    try {
-      const url = new URL(origin)
-      const hostname = url.hostname
-
-      // Allow loopback / localhost
-      if (hostname === 'localhost' || hostname === '127.0.0.1') return cb(null, true)
-
-      // Allow VPS host IP or matching domain
-      if (process.env.VPS_HOST && (hostname === process.env.VPS_HOST || hostname.includes(process.env.VPS_HOST))) {
-        return cb(null, true)
-      }
-
-      // Allow wildcard DNS domains (sslip.io, nip.io)
-      if (hostname.endsWith('.sslip.io') || hostname.endsWith('.nip.io')) {
-        return cb(null, true)
-      }
-
-      // Allow any comma-separated or single domain in ALLOWED_ORIGIN
-      const configured = (process.env.ALLOWED_ORIGIN || '').split(',').map(s => s.trim()).filter(Boolean)
-      if (configured.some(c => origin === c || origin.startsWith(c) || hostname === c)) {
-        return cb(null, true)
-      }
-
-      // Check allowedOrigins list
-      if (allowedOrigins.some(o => origin === o || origin.startsWith(o.replace(/:\d+$/, '')))) {
-        return cb(null, true)
-      }
-    } catch {}
-
-    // In production, reject disallowed origins
-    if (process.env.NODE_ENV === 'production') {
-      logger.warn('CORS rejected origin', { origin })
-      return cb(new Error(`CORS: origin ${origin} not allowed`))
+    if (allowedOriginsSet.has(origin)) {
+      return cb(null, true)
     }
 
-    // In development, allow all but log a warning
-    logger.warn('CORS: allowing non-listed origin in dev mode', { origin })
-    cb(null, true)
+    // Permit localhost with any port in non-production mode
+    if (process.env.NODE_ENV !== 'production') {
+      try {
+        const u = new URL(origin)
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
+          return cb(null, true)
+        }
+      } catch {}
+    }
+
+    logger.warn('CORS request rejected for origin', { origin, allowed: Array.from(allowedOriginsSet) })
+    return cb(null, false)
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-Setup-Token'],
 }))
 
-app.use(express.json({ limit: '10mb' }))
+// Retain raw request body for webhook HMAC signature verification (SD-04)
+app.use(express.json({
+  limit: '10mb',
+  verify: (req, res, buf) => {
+    req.rawBody = buf
+  }
+}))
 app.use(express.urlencoded({ extended: true }))
 app.use(cookieParser(process.env.COOKIE_SECRET || 'serverdash-cookie-secret'))
 
-// HTTP request logging
-app.use(morgan('combined', {
+// ─── Sec-Fetch-Site & Cross-Site CSRF Protection (SD-01) ──────────────────────
+app.use('/api', (req, res, next) => {
+  // Allow external webhooks to reach their handler (strictly /sites/:id/webhook)
+  if (/^\/sites\/[^/]+\/webhook$/.test(req.path)) {
+    return next()
+  }
+
+  const secFetchSite = req.headers['sec-fetch-site']
+  if (secFetchSite === 'cross-site' || secFetchSite === 'same-site') {
+    const origin = req.headers.origin
+    const isAllowed = origin && allowedOriginsSet.has(origin)
+    let isDevLocal = false
+    if (!isAllowed && origin && process.env.NODE_ENV !== 'production') {
+      try {
+        const u = new URL(origin)
+        if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') isDevLocal = true
+      } catch {}
+    }
+
+    if (!isAllowed && !isDevLocal) {
+      logger.warn('Blocked cross-site/unauthorized same-site request via Sec-Fetch-Site', { 
+        path: req.path, 
+        secFetchSite, 
+        origin, 
+        ip: req.ip 
+      })
+      return res.status(403).json({ error: 'Cross-site requests forbidden' })
+    }
+  }
+
+  // Reject cross-origin state-changing actions
+  if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(req.method)) {
+    const origin = req.headers.origin
+    if (origin && !allowedOriginsSet.has(origin)) {
+      if (process.env.NODE_ENV !== 'production') {
+        try {
+          const u = new URL(origin)
+          if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return next()
+        } catch {}
+      }
+      logger.warn('Blocked state-changing request with unapproved Origin', { path: req.path, origin })
+      return res.status(403).json({ error: 'Unauthorized request origin' })
+    }
+  }
+
+  next()
+})
+
+// HTTP request logging with query parameter redaction (SD-15)
+morgan.token('safe-url', (req) => {
+  try {
+    const url = new URL(req.originalUrl || req.url, 'http://localhost')
+    if (url.searchParams.has('command')) url.searchParams.set('command', '[REDACTED]')
+    if (url.searchParams.has('token')) url.searchParams.set('token', '[REDACTED]')
+    if (url.searchParams.has('password')) url.searchParams.set('password', '[REDACTED]')
+    if (url.searchParams.has('setupToken')) url.searchParams.set('setupToken', '[REDACTED]')
+    if (url.searchParams.has('secret')) url.searchParams.set('secret', '[REDACTED]')
+    return url.pathname + url.search
+  } catch {
+    return req.originalUrl || req.url
+  }
+})
+
+app.use(morgan(':remote-addr - :remote-user [:date[clf]] ":method :safe-url HTTP/:http-version" :status :res[content-length]', {
   stream: { write: (msg) => logger.http(msg.trim()) }
 }))
 
-// Rate limiting
+// Rate limiting (SD-12)
 const limiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 120,
@@ -95,10 +159,20 @@ const limiter = rateLimit({
 })
 app.use('/api/', limiter)
 
+// Dedicated strict limiter for auth endpoints
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  message: { error: 'Too many authentication attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+})
+app.use('/api/auth', authLimiter)
+
 // Stricter rate limit for exec endpoint
 const execLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 10,
+  max: 20,
   message: { error: 'Too many command executions' },
 })
 
@@ -114,11 +188,12 @@ app.get('/api/health', (req, res) => {
 
 // ── Apple Passkey / WebAuthn Auth routes (public — no auth middleware) ─────────
 const webAuthnRouter = require('./src/routes/auth-webauthn')
+const { validateSession } = require('./src/routes/auth-webauthn')
 app.use('/api/auth', webAuthnRouter)
 
 // Settings (persisted file store)
 const SETTINGS_FILE = path.join(__dirname, 'data', 'settings.json')
-fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true })
+fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true, mode: 0o700 })
 
 let settings = {}
 try {
@@ -129,8 +204,21 @@ try {
   logger.error('Error loading settings file', { error: e.message })
 }
 
-// GET /api/settings is public so the login screen can load branding without a 401 error
-app.get('/api/settings', (req, res) => res.json(settings))
+// GET /api/settings: public for branding, authenticated for full settings (SD-10)
+app.get('/api/settings', (req, res) => {
+  const token = req.cookies?.admin_session
+  if (token && validateSession(token)) {
+    // Return full settings without exposing sensitive raw encrypted credentials
+    const safeSettings = { ...settings }
+    if (safeSettings.github) {
+      const { encryptedToken, ...safeGh } = safeSettings.github
+      safeSettings.github = safeGh
+    }
+    return res.json(safeSettings)
+  }
+  // Unauthenticated: only return branding info
+  return res.json({ branding: settings.branding || {} })
+})
 
 
 
@@ -170,15 +258,19 @@ app.use('/api/analytics', analyticsRouter)
 app.use('/api/processes', processesRouter)
 app.use('/api/github', githubRouter)
 
-// POST /api/settings/:section requires authenticated admin
+// POST /api/settings/:section requires authenticated admin (SD-23: prevent prototype pollution)
 app.post('/api/settings/:section', (req, res) => {
-  settings[req.params.section] = req.body
+  const section = String(req.params.section || '')
+  if (!section || ['__proto__', 'constructor', 'prototype'].includes(section)) {
+    return res.status(400).json({ error: 'Invalid settings section' })
+  }
+  settings[section] = req.body
   try {
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8')
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), { encoding: 'utf8', mode: 0o600 })
   } catch (e) {
     logger.error('Error saving settings file', { error: e.message })
   }
-  logger.info('Settings updated', { section: req.params.section, user: req.user?.email })
+  logger.info('Settings updated', { section, user: req.user?.email })
   res.json({ success: true })
 })
 
@@ -299,19 +391,23 @@ app.post('/api/system/swap', async (req, res) => {
   }
 })
 
-// ─── Error Handler ─────────────────────────────────────────────────────────────
+// ─── Error Handler (SD-23: no internal stack leak in production) ─────────────
 app.use((err, req, res, next) => {
   logger.error('Unhandled error', { error: err.message, stack: err.stack })
-  res.status(err.status || 500).json({ error: err.message || 'Internal server error' })
+  const status = err.status || 500
+  const message = status === 500 && process.env.NODE_ENV === 'production'
+    ? 'Internal server error'
+    : err.message || 'Internal server error'
+  res.status(status).json({ error: message })
 })
 
 app.use((req, res) => {
   res.status(404).json({ error: `Route ${req.method} ${req.path} not found` })
 })
 
-// ─── Start ─────────────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  logger.info(`ServerDash backend running on port ${PORT}`, {
+// ─── Start (SD-16: bind to loopback HOST by default) ──────────────────────────
+app.listen(PORT, HOST, () => {
+  logger.info(`ServerDash backend running on ${HOST}:${PORT}`, {
     env: process.env.NODE_ENV,
     vpsHost: process.env.VPS_HOST || '(not configured)',
     githubClientId: process.env.GITHUB_CLIENT_ID ? '✓ configured' : '✗ not set (GitHub integration disabled)',

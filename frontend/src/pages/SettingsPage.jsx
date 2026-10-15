@@ -1,5 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, CheckCircle, Shield, Link, Unlink, RefreshCw, X, Copy, ExternalLink } from 'lucide-react'
+import { 
+  Save, Eye, EyeOff, Server, Key, Globe, Bell, Sliders, Palette, 
+  CheckCircle, Shield, Link, Unlink, RefreshCw, X, Copy, ExternalLink,
+  Users, UserPlus, Check, Trash2, Clock, ShieldCheck, ShieldAlert, AlertTriangle, UserCheck
+} from 'lucide-react'
 import api from '../lib/api'
 import { useAuth } from '../contexts/AuthContext'
 import { useBranding } from '../contexts/BrandingContext'
@@ -16,11 +20,23 @@ export default function SettingsPage() {
   const { user } = useAuth()
   const { branding, updateBranding } = useBranding()
   const { theme: currentTheme, setTheme, themes } = useTheme()
+  const [activeTab, setActiveTab] = useState('general') // 'general' | 'users'
   const [vps, setVps] = useState({ host: import.meta.env.VITE_VPS_HOST || '', user: 'root', keyPath: '/root/.ssh/id_rsa', port: '22' })
   const [notifications, setNotifications] = useState({ cpuThreshold: 80, ramThreshold: 90, emailAlerts: false, alertEmail: '' })
   const [apiUrl, setApiUrl] = useState(import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:4001' : (typeof window !== 'undefined' ? window.location.origin : '')))
   const [saved, setSaved] = useState('')
   const [showKey, setShowKey] = useState(false)
+
+  // ── Team & Passkeys State ───────────────────────────────────────────────────
+  const [users, setUsers] = useState([])
+  const [invites, setInvites] = useState([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [showInviteModal, setShowInviteModal] = useState(false)
+  const [inviteForm, setInviteForm] = useState({ username: '', role: 'view_only', expiresInHours: 24 })
+  const [createdInvite, setCreatedInvite] = useState(null)
+  const [inviteCopied, setInviteCopied] = useState(false)
+  const [userActionMsg, setUserActionMsg] = useState('')
+  const [approvingRole, setApprovingRole] = useState({})
 
   // Swap space states
   const [swapInfo, setSwapInfo] = useState({ active: false, totalSwapBytes: 0, usedSwapBytes: 0, swapFileExists: false, swapFileSizeBytes: 0 })
@@ -54,7 +70,109 @@ export default function SettingsPage() {
   useEffect(() => {
     fetchSwap()
     fetchGhStatus()
+    fetchUsersAndInvites()
   }, [])
+
+  // ── Team & Passkeys Handlers ────────────────────────────────────────────────
+  const fetchUsersAndInvites = async () => {
+    if (user && user.role !== 'admin') return
+    setLoadingUsers(true)
+    try {
+      const [uRes, iRes] = await Promise.all([
+        api.get('/api/auth/users'),
+        api.get('/api/auth/invites')
+      ])
+      setUsers(uRes.data || [])
+      setInvites(iRes.data || [])
+    } catch (e) {
+      console.error('Failed to fetch users/invites:', e)
+    } finally {
+      setLoadingUsers(false)
+    }
+  }
+
+  const handleApprove = async (userId) => {
+    const role = approvingRole[userId] || 'view_only'
+    try {
+      await api.post(`/api/auth/users/${userId}/approve`, { role })
+      setUserActionMsg('✓ User access approved successfully!')
+      setTimeout(() => setUserActionMsg(''), 4000)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleReject = async (userId) => {
+    if (!window.confirm('Are you sure you want to reject this registration request?')) return
+    try {
+      await api.post(`/api/auth/users/${userId}/reject`)
+      setUserActionMsg('User registration request rejected.')
+      setTimeout(() => setUserActionMsg(''), 4000)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleToggleRole = async (userId, currentRole) => {
+    const newRole = currentRole === 'admin' ? 'view_only' : 'admin'
+    try {
+      await api.post(`/api/auth/users/${userId}/role`, { role: newRole })
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleToggleStatus = async (userId) => {
+    try {
+      await api.post(`/api/auth/users/${userId}/toggle-status`)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleDeleteUser = async (userId, username) => {
+    if (!window.confirm(`Permanently remove user "${username}" and revoke their passkeys?`)) return
+    try {
+      await api.delete(`/api/auth/users/${userId}`)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleCreateInvite = async (e) => {
+    e.preventDefault()
+    try {
+      const res = await api.post('/api/auth/users/invite', inviteForm)
+      setCreatedInvite(res.data)
+      setInviteCopied(false)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const handleRevokeInvite = async (inviteId) => {
+    if (!window.confirm('Revoke this invitation link?')) return
+    try {
+      await api.delete(`/api/auth/invites/${inviteId}`)
+      await fetchUsersAndInvites()
+    } catch (e) {
+      alert(e.response?.data?.error || e.message)
+    }
+  }
+
+  const copyInviteLink = (token) => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const link = `${origin}/?invite=${token}`
+    navigator.clipboard.writeText(link)
+    setInviteCopied(true)
+    setTimeout(() => setInviteCopied(false), 3000)
+  }
 
   // ── GitHub Integration Handlers ─────────────────────────────────────────────
   const fetchGhStatus = async () => {
@@ -214,13 +332,73 @@ export default function SettingsPage() {
       <div style={{ borderBottom:'1px solid var(--color-border)', paddingBottom: 16 }}>
         <h2 style={{ fontSize: '1.75rem', fontWeight: 800, margin: 0, letterSpacing: '-0.03em' }}>System Settings Suite</h2>
         <p style={{ color: 'var(--color-text-muted)', fontSize: '0.875rem', marginTop: 4 }}>
-          Adjust dashboard custom branding, notifications, host connection protocols, and white-label details.
+          Adjust dashboard custom branding, notifications, host connection protocols, and team passkey access.
         </p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
-        {/* Left column settings cards */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 10, borderBottom: '1px solid var(--color-border)', paddingBottom: 14 }}>
+        <button
+          onClick={() => setActiveTab('general')}
+          style={{
+            padding: '8px 16px',
+            borderRadius: 8,
+            fontSize: '0.85rem',
+            fontWeight: 600,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            border: activeTab === 'general' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
+            background: activeTab === 'general' ? 'rgba(99,102,241,0.12)' : 'var(--color-surface)',
+            color: activeTab === 'general' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Sliders size={15} /> General & System
+        </button>
+
+        {user?.role === 'admin' && (
+          <button
+            onClick={() => { setActiveTab('users'); fetchUsersAndInvites(); }}
+            style={{
+              padding: '8px 16px',
+              borderRadius: 8,
+              fontSize: '0.85rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              border: activeTab === 'users' ? '1px solid var(--color-primary)' : '1px solid var(--color-border)',
+              background: activeTab === 'users' ? 'rgba(99,102,241,0.12)' : 'var(--color-surface)',
+              color: activeTab === 'users' ? 'var(--color-primary)' : 'var(--color-text-muted)',
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Users size={15} /> Team & Passkey Access
+            {users.filter(u => u.status === 'pending').length > 0 && (
+              <span style={{
+                background: '#f59e0b',
+                color: '#000',
+                fontWeight: 800,
+                fontSize: '0.7rem',
+                padding: '1px 7px',
+                borderRadius: 10,
+                marginLeft: 4,
+              }}>
+                {users.filter(u => u.status === 'pending').length} pending
+              </span>
+            )}
+          </button>
+        )}
+      </div>
+
+      {/* Tab 1: General & System */}
+      {activeTab === 'general' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 20 }}>
+          {/* Left column settings cards */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           
           {/* Custom Branding & White-Labeling */}
           <SectionCard 
@@ -641,6 +819,507 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+    )}
+
+      {/* Tab 2: Team & Passkey Access */}
+      {activeTab === 'users' && (
+        <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Action notification */}
+          {userActionMsg && (
+            <div style={{
+              padding: '12px 16px',
+              background: 'rgba(16,185,129,0.08)',
+              border: '1px solid rgba(16,185,129,0.25)',
+              borderRadius: 10,
+              color: 'var(--color-success)',
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+              <CheckCircle size={16} />
+              {userActionMsg}
+            </div>
+          )}
+
+          {/* 1. Pending Approvals Card (if any pending) */}
+          {users.filter(u => u.status === 'pending').length > 0 && (
+            <div className="glass-card" style={{
+              padding: 24,
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              background: 'rgba(245, 158, 11, 0.04)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 16,
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 10, background: 'rgba(245, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Clock size={18} color="#f59e0b" />
+                  </div>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800, color: '#f59e0b' }}>
+                      Pending User Approvals ({users.filter(u => u.status === 'pending').length})
+                    </h3>
+                    <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                      These users have registered hardware passkeys via invitation. Assign permissions and approve them to grant access.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid rgba(245, 158, 11, 0.2)', textAlign: 'left', color: 'var(--color-text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                      <th style={{ padding: '8px 12px' }}>User</th>
+                      <th style={{ padding: '8px 12px' }}>Registered At</th>
+                      <th style={{ padding: '8px 12px' }}>Assigned Permission</th>
+                      <th style={{ padding: '8px 12px', textAlign: 'right' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.filter(u => u.status === 'pending').map(u => (
+                      <tr key={u.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                        <td style={{ padding: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'rgba(245, 158, 11, 0.2)', color: '#f59e0b', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: '0.85rem' }}>
+                              {(u.username || 'U')[0].toUpperCase()}
+                            </div>
+                            <div>
+                              <div style={{ fontWeight: 700 }}>{u.username}</div>
+                              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Passkey Device Registered</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ padding: '12px', color: 'var(--color-text-muted)', fontSize: '0.8125rem' }}>
+                          {u.created_at ? new Date(u.created_at).toLocaleString() : 'Just now'}
+                        </td>
+                        <td style={{ padding: '12px' }}>
+                          <select
+                            value={approvingRole[u.id] || u.role}
+                            onChange={e => setApprovingRole({ ...approvingRole, [u.id]: e.target.value })}
+                            style={{
+                              background: 'var(--color-surface-2)',
+                              border: '1px solid var(--color-border)',
+                              borderRadius: 8,
+                              color: 'var(--color-text)',
+                              padding: '6px 12px',
+                              fontSize: '0.8125rem',
+                              outline: 'none',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <option value="view_only">View Only (Read-Only Metrics & Logs)</option>
+                            <option value="admin">Full Administrator (All Privileges)</option>
+                          </select>
+                        </td>
+                        <td style={{ padding: '12px', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                            <button
+                              onClick={() => handleApprove(u.id)}
+                              className="btn btn-sm"
+                              style={{ background: '#10b981', color: '#fff', border: 'none', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: '0.8rem', fontWeight: 600 }}
+                            >
+                              <Check size={14} /> Approve Access
+                            </button>
+                            <button
+                              onClick={() => handleReject(u.id)}
+                              className="btn btn-secondary btn-sm"
+                              style={{ color: 'var(--color-danger)', borderColor: 'rgba(239,68,68,0.2)', display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: '0.8rem' }}
+                            >
+                              <X size={14} /> Reject
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* 2. Registered Users Management Card */}
+          <div className="glass-card" style={{ padding: 26, display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)', paddingBottom: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Users size={18} color="var(--color-primary)" />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>Registered Users & Passkeys</h3>
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                    Manage authorized users, biometrics, hardware authenticators, and administrative roles.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={fetchUsersAndInvites}
+                  disabled={loadingUsers}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <RefreshCw size={13} style={{ animation: loadingUsers ? 'spin 1s linear infinite' : 'none' }} /> Refresh
+                </button>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => { setShowInviteModal(true); setCreatedInvite(null); }}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+                >
+                  <UserPlus size={14} /> Invite New User / Device
+                </button>
+              </div>
+            </div>
+
+            {/* Users Table */}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.875rem' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--color-border)', textAlign: 'left', color: 'var(--color-text-muted)', fontSize: '0.75rem', textTransform: 'uppercase' }}>
+                    <th style={{ padding: '10px 14px' }}>User / Account</th>
+                    <th style={{ padding: '10px 14px' }}>Role / Permission</th>
+                    <th style={{ padding: '10px 14px' }}>Status</th>
+                    <th style={{ padding: '10px 14px' }}>Passkeys</th>
+                    <th style={{ padding: '10px 14px' }}>Approved Date</th>
+                    <th style={{ padding: '10px 14px', textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.filter(u => u.status !== 'pending').map(u => (
+                    <tr key={u.id} style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.04)' }}>
+                      <td style={{ padding: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          <div style={{
+                            width: 36, height: 36,
+                            borderRadius: '50%',
+                            background: u.is_primary_admin ? 'linear-gradient(135deg, #7c6ef5, #6366f1)' : 'var(--color-surface-2)',
+                            color: '#fff',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 700,
+                            fontSize: '0.9rem',
+                            border: '1px solid var(--color-border)',
+                          }}>
+                            {(u.username || 'U')[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+                              {u.username}
+                              {u.is_primary_admin === 1 && (
+                                <span style={{ fontSize: '0.7rem', padding: '1px 6px', background: 'rgba(124,110,245,0.15)', color: '#818cf8', borderRadius: 6, fontWeight: 700 }}>
+                                  Root Admin
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                              {u.display_name || u.username}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '14px' }}>
+                        <span style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          padding: '4px 10px',
+                          borderRadius: 20,
+                          background: u.role === 'admin' ? 'rgba(99,102,241,0.12)' : 'rgba(16,185,129,0.12)',
+                          color: u.role === 'admin' ? 'var(--color-primary)' : 'var(--color-success)',
+                          border: `1px solid ${u.role === 'admin' ? 'rgba(99,102,241,0.25)' : 'rgba(16,185,129,0.25)'}`,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                        }}>
+                          {u.role === 'admin' ? <ShieldCheck size={12} /> : <Eye size={12} />}
+                          {u.role === 'admin' ? 'Full Administrator' : 'View Only'}
+                        </span>
+                      </td>
+
+                      <td style={{ padding: '14px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.8125rem' }}>
+                          <span style={{
+                            width: 7, height: 7, borderRadius: '50%',
+                            background: u.status === 'active' ? 'var(--color-success)' : 'var(--color-danger)',
+                            boxShadow: u.status === 'active' ? '0 0 6px var(--color-success)' : 'none',
+                          }} />
+                          <span style={{ textTransform: 'capitalize', color: u.status === 'active' ? 'var(--color-text)' : 'var(--color-text-muted)' }}>
+                            {u.status}
+                          </span>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '14px', color: 'var(--color-text-muted)', fontSize: '0.8125rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Key size={13} color="var(--color-primary)" />
+                          <span>{u.passkey_count || 1} Registered</span>
+                        </div>
+                      </td>
+
+                      <td style={{ padding: '14px', color: 'var(--color-text-muted)', fontSize: '0.8125rem' }}>
+                        {u.approved_at ? new Date(u.approved_at).toLocaleDateString() : (u.created_at ? new Date(u.created_at).toLocaleDateString() : 'Initial Setup')}
+                      </td>
+
+                      <td style={{ padding: '14px', textAlign: 'right' }}>
+                        {u.is_primary_admin === 1 ? (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
+                            Permanent Admin
+                          </span>
+                        ) : (
+                          <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                            <button
+                              onClick={() => handleToggleRole(u.id, u.role)}
+                              className="btn btn-secondary btn-sm"
+                              title="Toggle between Administrator and View Only"
+                              style={{ padding: '4px 10px', fontSize: '0.75rem' }}
+                            >
+                              Make {u.role === 'admin' ? 'View Only' : 'Admin'}
+                            </button>
+                            <button
+                              onClick={() => handleToggleStatus(u.id)}
+                              className="btn btn-secondary btn-sm"
+                              title="Toggle account active/disabled"
+                              style={{ padding: '4px 10px', fontSize: '0.75rem', color: u.status === 'active' ? 'var(--color-warning)' : 'var(--color-success)' }}
+                            >
+                              {u.status === 'active' ? 'Disable' : 'Enable'}
+                            </button>
+                            <button
+                              onClick={() => handleDeleteUser(u.id, u.username)}
+                              className="btn btn-secondary btn-sm"
+                              title="Delete user and passkey"
+                              style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {users.length === 0 && (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', padding: '30px', color: 'var(--color-text-muted)' }}>
+                        No users loaded. Click Refresh to reload.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 3. Active Invitations Card (if any) */}
+          {invites.length > 0 && (
+            <div className="glass-card" style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)', paddingBottom: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Key size={16} color="var(--color-primary)" />
+                  <h4 style={{ margin: 0, fontSize: '0.925rem', fontWeight: 700 }}>Active Registration Invitations ({invites.length})</h4>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {invites.map(inv => (
+                  <div key={inv.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', background: 'var(--color-surface-2)', borderRadius: 10, border: '1px solid var(--color-border)' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
+                        Invite for: <strong>{inv.username || 'Any Invited User'}</strong>
+                        <span style={{ marginLeft: 8, fontSize: '0.75rem', padding: '1px 8px', borderRadius: 10, background: inv.role === 'admin' ? 'rgba(99,102,241,0.15)' : 'rgba(16,185,129,0.15)', color: inv.role === 'admin' ? 'var(--color-primary)' : 'var(--color-success)' }}>
+                          {inv.role === 'admin' ? 'Admin' : 'View Only'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 2 }}>
+                        Expires: {new Date(inv.expires_at).toLocaleString()}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn btn-secondary btn-sm" onClick={() => copyInviteLink(inv.invite_token)} style={{ fontSize: '0.75rem' }}>
+                        <Copy size={12} /> Copy Link
+                      </button>
+                      <button className="btn btn-secondary btn-sm" onClick={() => handleRevokeInvite(inv.id)} style={{ color: 'var(--color-danger)', fontSize: '0.75rem' }}>
+                        <X size={12} /> Revoke
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Invite User Modal Overlay ─────────────────────────────────────── */}
+      {showInviteModal && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(2, 6, 23, 0.85)',
+          backdropFilter: 'blur(12px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: 20,
+        }}>
+          <div style={{
+            width: '100%',
+            maxWidth: 480,
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 16,
+            padding: 28,
+            boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 18,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-border)', paddingBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <UserPlus size={18} color="var(--color-primary)" />
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800 }}>Invite User / Passkey</h3>
+              </div>
+              <button onClick={() => setShowInviteModal(false)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', padding: 4 }}>
+                <X size={16} />
+              </button>
+            </div>
+
+            {!createdInvite ? (
+              <form onSubmit={handleCreateInvite} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label className="label">Username / Name</label>
+                  <input
+                    className="input"
+                    type="text"
+                    value={inviteForm.username}
+                    onChange={e => setInviteForm({ ...inviteForm, username: e.target.value })}
+                    placeholder="e.g. kamal, john@company.com"
+                    required
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: 4, display: 'block' }}>
+                    The display identifier that will be assigned to this passkey.
+                  </span>
+                </div>
+
+                <div>
+                  <label className="label">Assigned Permission Level</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 4 }}>
+                    <div
+                      onClick={() => setInviteForm({ ...inviteForm, role: 'view_only' })}
+                      style={{
+                        padding: 12,
+                        borderRadius: 10,
+                        border: `1.5px solid ${inviteForm.role === 'view_only' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        background: inviteForm.role === 'view_only' ? 'rgba(99,102,241,0.08)' : 'var(--color-surface-2)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.85rem', color: inviteForm.role === 'view_only' ? 'var(--color-primary)' : 'var(--color-text)' }}>
+                        <Eye size={15} /> View Only
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                        Read-only telemetry, website status, docker apps, & logs. Cannot run commands.
+                      </div>
+                    </div>
+
+                    <div
+                      onClick={() => setInviteForm({ ...inviteForm, role: 'admin' })}
+                      style={{
+                        padding: 12,
+                        borderRadius: 10,
+                        border: `1.5px solid ${inviteForm.role === 'admin' ? 'var(--color-primary)' : 'var(--color-border)'}`,
+                        background: inviteForm.role === 'admin' ? 'rgba(99,102,241,0.08)' : 'var(--color-surface-2)',
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, fontSize: '0.85rem', color: inviteForm.role === 'admin' ? 'var(--color-primary)' : 'var(--color-text)' }}>
+                        <ShieldCheck size={15} /> Full Admin
+                      </div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: 4, lineHeight: 1.4 }}>
+                        Full administrative control over server packages, deployments, and settings.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="label">Invitation Valid For</label>
+                  <select
+                    className="input"
+                    value={inviteForm.expiresInHours}
+                    onChange={e => setInviteForm({ ...inviteForm, expiresInHours: Number(e.target.value) })}
+                  >
+                    <option value={24}>24 Hours</option>
+                    <option value={72}>3 Days</option>
+                    <option value={168}>7 Days</option>
+                  </select>
+                </div>
+
+                <div style={{ padding: '10px 12px', background: 'rgba(99,102,241,0.06)', borderRadius: 8, border: '1px solid rgba(99,102,241,0.15)', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                  ℹ️ <strong>Security note:</strong> When the invited person registers their passkey on their device, their status will initially be <strong>Pending</strong>. You must approve their access from the Pending Approvals list before they can log in.
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 6 }}>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowInviteModal(false)}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <UserPlus size={14} /> Generate Invitation Link
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div style={{ padding: '14px', background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 10, color: 'var(--color-success)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <CheckCircle size={18} />
+                  Invitation created for <strong>{createdInvite.username}</strong> ({createdInvite.role === 'admin' ? 'Administrator' : 'View Only'})
+                </div>
+
+                <div>
+                  <label className="label">Registration Link (Send to user)</label>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                    <input
+                      className="input"
+                      readOnly
+                      value={`${typeof window !== 'undefined' ? window.location.origin : ''}/?invite=${createdInvite.inviteToken}`}
+                      style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}
+                    />
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => copyInviteLink(createdInvite.inviteToken)}
+                      style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}
+                    >
+                      {inviteCopied ? <Check size={14} /> : <Copy size={14} />}
+                      {inviteCopied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', lineHeight: 1.5, background: 'var(--color-surface-2)', padding: 12, borderRadius: 8, border: '1px solid var(--color-border)' }}>
+                  <strong>Next steps:</strong>
+                  <ol style={{ margin: '6px 0 0 0', paddingLeft: 18 }}>
+                    <li>Send this link to the user.</li>
+                    <li>They open it on their device (PC, iPhone, Android, Mac) and register their biometric passkey.</li>
+                    <li>Their account will appear under <strong>Pending User Approvals</strong> above.</li>
+                    <li>Click <strong>Approve Access</strong> to activate their account.</li>
+                  </ol>
+                </div>
+
+                <button className="btn btn-secondary" onClick={() => setShowInviteModal(false)} style={{ alignSelf: 'flex-end' }}>
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+

@@ -1,9 +1,10 @@
 const express = require('express')
 const router = express.Router()
 const Docker = require('dockerode')
-const { exec } = require('child_process')
+const { exec, execFile } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const logger = require('../logger')
 const axios = require('axios')
 
@@ -18,7 +19,6 @@ function sseSetup(res) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
-  res.setHeader('Access-Control-Allow-Origin', '*')
   res.flushHeaders()
   return (data) => res.write(`data: ${data}\n\n`)
 }
@@ -142,50 +142,59 @@ router.post('/deploy', async (req, res) => {
   }
 })
 
-// ── POST /api/docker/compose ────────────────────────────────────────────────────
+// ── POST /api/docker/compose (SD-05) ────────────────────────────────────────────
 router.post('/compose', async (req, res) => {
   const { name, yaml } = req.body
-  if (!name || !yaml) return res.status(400).json({ error: 'name and yaml required' })
+  const cleanName = String(name || '').trim()
+  if (!cleanName || !yaml || !/^[a-zA-Z0-9_-]{1,64}$/.test(cleanName)) {
+    return res.status(400).json({ error: 'Valid stack name (alphanumeric, dashes, underscores) and yaml are required' })
+  }
   const fs = require('fs')
   const path = require('path')
   try {
-    const dir = `/opt/compose/${name}`
+    const dir = `/opt/compose/${cleanName}`
     fs.mkdirSync(dir, { recursive: true })
     fs.writeFileSync(path.join(dir, 'docker-compose.yml'), yaml)
-    const { stdout } = await execAsync(`cd ${dir} && docker compose up -d 2>&1`)
-    res.json({ success: true, output: stdout })
+    const { stdout, stderr } = await execFileAsync('docker', ['compose', 'up', '-d'], { cwd: dir })
+    res.json({ success: true, output: (stdout || '') + (stderr || '') })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
-// ── POST /api/docker/stacks/:name/stop ──────────────────────────────────────────
+// ── POST /api/docker/stacks/:name/stop (SD-05) ──────────────────────────────────
 router.post('/stacks/:name/stop', async (req, res) => {
-  const { name } = req.params
+  const cleanName = String(req.params.name || '').trim()
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(cleanName)) {
+    return res.status(400).json({ error: 'Invalid stack name format' })
+  }
   try {
-    logger.info(`Stopping docker stack: ${name}`)
-    const { stdout } = await execAsync(`docker compose -p ${name} stop 2>&1`)
-    res.json({ success: true, output: stdout })
+    logger.info(`Stopping docker stack: ${cleanName}`)
+    const { stdout, stderr } = await execFileAsync('docker', ['compose', '-p', cleanName, 'stop'])
+    res.json({ success: true, output: (stdout || '') + (stderr || '') })
   } catch (err) {
-    logger.error(`Error stopping stack ${name}`, { error: err.message })
+    logger.error(`Error stopping stack ${cleanName}`, { error: err.message })
     res.status(500).json({ error: err.message })
   }
 })
 
-// ── DELETE /api/docker/stacks/:name ─────────────────────────────────────────────
+// ── DELETE /api/docker/stacks/:name (SD-05) ─────────────────────────────────────
 router.delete('/stacks/:name', async (req, res) => {
-  const { name } = req.params
+  const cleanName = String(req.params.name || '').trim()
+  if (!/^[a-zA-Z0-9_-]{1,64}$/.test(cleanName)) {
+    return res.status(400).json({ error: 'Invalid stack name format' })
+  }
   try {
-    logger.info(`Deleting docker stack: ${name}`)
+    logger.info(`Deleting docker stack: ${cleanName}`)
     
     // 1. Tear down containers, volumes, networks
-    const { stdout } = await execAsync(`docker compose -p ${name} down -v 2>&1`)
+    const { stdout, stderr } = await execFileAsync('docker', ['compose', '-p', cleanName, 'down', '-v'])
     
     // 2. Clean up files if they exist in ServerDash directories
     const fs = require('fs')
     const pathsToClean = [
-      `/opt/supabase-projects/${name}`,
-      `/opt/compose/${name}`
+      `/opt/supabase-projects/${cleanName}`,
+      `/opt/compose/${cleanName}`
     ]
     for (const p of pathsToClean) {
       if (fs.existsSync(p)) {

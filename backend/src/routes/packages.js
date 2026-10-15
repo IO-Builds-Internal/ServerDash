@@ -1,20 +1,24 @@
 const express = require('express')
 const router = express.Router()
-const { exec, spawn } = require('child_process')
+const { exec, execFile, spawn } = require('child_process')
 const { promisify } = require('util')
 const execAsync = promisify(exec)
+const execFileAsync = promisify(execFile)
 const logger = require('../logger')
 const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 
-const upload = multer({ dest: '/tmp/pkg-uploads/' })
+// Restrict upload size to 500MB (SD-23)
+const upload = multer({
+  dest: '/tmp/pkg-uploads/',
+  limits: { fileSize: 500 * 1024 * 1024 }
+})
 
 function sseSetup(res) {
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
-  res.setHeader('Access-Control-Allow-Origin', '*')
   res.flushHeaders()
   return (data) => res.write(`data: ${data}\n\n`)
 }
@@ -146,9 +150,10 @@ router.get('/info', async (req, res) => {
   }
 })
 
-// GET /api/packages/stream?pkg= — SSE streaming apt install
-router.get('/stream', async (req, res) => {
-  const { pkg, action = 'install' } = req.query
+// ── POST / GET /api/packages/stream (SD-01) ──────────────────────────────────
+const handleStream = async (req, res) => {
+  const pkg = req.body?.pkg || req.query?.pkg
+  const action = req.body?.action || req.query?.action || 'install'
   if (!pkg || !/^[\w\-\.+]+$/.test(pkg)) return res.status(400).end()
 
   const send = sseSetup(res)
@@ -166,10 +171,11 @@ router.get('/stream', async (req, res) => {
     res.end()
   })
   req.on('close', () => child.kill())
-})
+}
+router.post('/stream', handleStream)
 
-// POST /api/packages/apt-update — run apt-get update via SSE
-router.get('/update', async (req, res) => {
+// ── POST / GET /api/packages/update (SD-01) ───────────────────────────────────
+const handleUpdate = async (req, res) => {
   const send = sseSetup(res)
   send('Running apt-get update…')
   const child = spawn('/bin/bash', ['-c', 'apt-get update 2>&1'])
@@ -179,22 +185,37 @@ router.get('/update', async (req, res) => {
     send(code === 0 ? '✓ Package list updated' : `✗ Failed (exit ${code})`)
     res.end()
   })
-})
+}
+router.post('/update', handleUpdate)
 
-// GET /api/packages/git-install — clone a package from Git and auto-configure dependencies
-router.get('/git-install', async (req, res) => {
-  const { repoUrl, dest = '/var/www' } = req.query
-  if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' })
+// ── POST / GET /api/packages/git-install (SD-01, SD-05) ───────────────────────
+const handleGitInstall = async (req, res) => {
+  const repoUrl = req.body?.repoUrl || req.query?.repoUrl
+  const dest = req.body?.dest || req.query?.dest || '/var/www'
+  if (!repoUrl || typeof repoUrl !== 'string') return res.status(400).json({ error: 'repoUrl required' })
+
+  // Sanitize repoUrl (prevent leading '-' option injection)
+  if (repoUrl.startsWith('-') || !/^(https?:\/\/|git@)/i.test(repoUrl.trim())) {
+    return res.status(400).json({ error: 'Invalid git repository URL format' })
+  }
+
+  // Validate destination directory to prevent path traversal
+  const resolvedDest = path.resolve(dest)
+  if (!resolvedDest.startsWith('/var/www') && !resolvedDest.startsWith('/opt')) {
+    return res.status(400).json({ error: 'Destination must be within /var/www or /opt' })
+  }
 
   const send = sseSetup(res)
   
   try {
-    const repoName = repoUrl.split('/').pop().replace(/\.git$/, '')
-    const targetDir = path.join(dest, repoName)
+    const rawRepoName = path.basename(repoUrl.trim()).replace(/\.git$/, '')
+    const repoName = rawRepoName.replace(/[^a-zA-Z0-9_.-]/g, '_')
+    if (!repoName) return res.status(400).json({ error: 'Invalid repository name' })
+    const targetDir = path.join(resolvedDest, repoName)
     
     send(`▶ Cloning git repository: ${repoUrl} into ${targetDir}…`)
     
-    const cloneChild = spawn('git', ['clone', repoUrl, targetDir])
+    const cloneChild = spawn('git', ['clone', '--', repoUrl.trim(), targetDir])
     
     cloneChild.stdout.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
     cloneChild.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
@@ -250,34 +271,41 @@ router.get('/git-install', async (req, res) => {
     send(`✗ Failed with error: ${err.message}`)
     res.end()
   }
-})
+}
+router.post('/git-install', handleGitInstall)
 
-// POST /api/packages/zip — install from .deb or extract .zip/.tar.gz
+// ── POST /api/packages/zip (SD-05: execFile without shell interpolation) ──────
 router.post('/zip', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
   const tmpPath = req.file.path
   const origName = req.file.originalname
   const ext = path.extname(origName).toLowerCase()
   const dest = req.body.dest || '/usr/local/bin'
+  const resolvedDest = path.resolve(dest)
+
+  if (['/', '/etc', '/root', '/bin', '/sbin'].includes(resolvedDest)) {
+    try { fs.unlinkSync(tmpPath) } catch {}
+    return res.status(400).json({ error: 'Extraction to critical system path blocked' })
+  }
 
   try {
     let output = ''
+    fs.mkdirSync(resolvedDest, { recursive: true })
     if (ext === '.deb') {
-      const { stdout, stderr } = await execAsync(`dpkg -i "${tmpPath}" 2>&1`)
-      output = stdout + stderr
+      const { stdout, stderr } = await execFileAsync('dpkg', ['-i', tmpPath])
+      output = (stdout || '') + (stderr || '')
     } else if (ext === '.zip') {
-      fs.mkdirSync(dest, { recursive: true })
-      const { stdout, stderr } = await execAsync(`unzip -o "${tmpPath}" -d "${dest}" 2>&1`)
-      output = stdout + stderr
+      const { stdout, stderr } = await execFileAsync('unzip', ['-o', tmpPath, '-d', resolvedDest])
+      output = (stdout || '') + (stderr || '')
     } else if (ext === '.gz' || ext === '.tgz' || origName.endsWith('.tar.gz')) {
-      fs.mkdirSync(dest, { recursive: true })
-      const { stdout, stderr } = await execAsync(`tar -xzf "${tmpPath}" -C "${dest}" 2>&1`)
-      output = stdout + stderr
+      const { stdout, stderr } = await execFileAsync('tar', ['-xzf', tmpPath, '-C', resolvedDest])
+      output = (stdout || '') + (stderr || '')
     } else {
+      try { fs.unlinkSync(tmpPath) } catch {}
       return res.status(400).json({ error: `Unsupported format: ${ext}` })
     }
     fs.unlinkSync(tmpPath)
-    logger.info('Package installed from file', { name: origName, dest })
+    logger.info('Package installed from file', { name: origName, dest: resolvedDest })
     res.json({ success: true, output })
   } catch (err) {
     try { fs.unlinkSync(tmpPath) } catch { }
@@ -285,10 +313,10 @@ router.post('/zip', upload.single('file'), async (req, res) => {
   }
 })
 
-// POST /api/packages/exec — run arbitrary safe command via SSE
-router.get('/exec-stream', async (req, res) => {
-  const { command } = req.query
-  if (!command) return res.status(400).end()
+// ── POST / GET /api/packages/exec-stream (SD-01) ──────────────────────────────
+const handleExecStream = async (req, res) => {
+  const command = req.body?.command || req.query?.command
+  if (!command || typeof command !== 'string') return res.status(400).end()
   const blocked = ['rm -rf /', 'dd if=/dev/zero', 'mkfs', '> /dev/sda', 'format c:']
   if (blocked.some(b => command.includes(b))) return res.status(403).end()
 
@@ -299,7 +327,8 @@ router.get('/exec-stream', async (req, res) => {
   child.stderr.on('data', d => d.toString().split('\n').filter(Boolean).forEach(l => send(l)))
   child.on('close', code => { send(`Exit: ${code}`); res.end() })
   req.on('close', () => child.kill())
-})
+}
+router.post('/exec-stream', handleExecStream)
 
 // GET /api/packages/serverdash-update/status — check git repository updates
 router.get('/serverdash-update/status', async (req, res) => {
@@ -400,8 +429,8 @@ router.get('/serverdash-update/status', async (req, res) => {
   }
 })
 
-// GET /api/packages/serverdash-update/run — streams self-upgrade actions
-router.get('/serverdash-update/run', async (req, res) => {
+// ── POST / GET /api/packages/serverdash-update/run (SD-01) ────────────────────
+const handleServerDashUpdate = async (req, res) => {
   const send = sseSetup(res)
   send('▶ Starting ServerDash Panel Automated Self-Upgrade…')
 
@@ -473,6 +502,6 @@ router.get('/serverdash-update/run', async (req, res) => {
     send(`✗ Failed with critical exception: ${err.message}`)
     res.end()
   }
-})
-
+}
+router.post('/serverdash-update/run', handleServerDashUpdate)
 module.exports = router

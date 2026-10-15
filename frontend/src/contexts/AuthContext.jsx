@@ -24,15 +24,17 @@ async function fetchAuthStatus() {
 
 export function AuthProvider({ children }) {
   // BUG-19 FIX: use distinct `user` and `status` — no more `session: user` alias
-  const [user, setUser] = useState(null)           // { role: 'admin' } when authenticated
+  const [user, setUser] = useState(null)           // { userId, username, role, isPrimaryAdmin } when authenticated
   const [initialized, setInitialized] = useState(false) // has any passkey been registered?
   const [loading, setLoading] = useState(true)
+  const [pendingCount, setPendingCount] = useState(0)
 
   const refresh = useCallback(async () => {
     const status = await fetchAuthStatus()
     setInitialized(status.initialized)
+    setPendingCount(status.pendingCount || 0)
     if (status.authenticated) {
-      setUser({ role: 'admin' })
+      setUser(status.user || { role: 'admin', username: 'admin', isPrimaryAdmin: true })
       // Apply body class for zero-flash CSS gate
       document.body.classList.add('authenticated')
     } else {
@@ -62,10 +64,10 @@ export function AuthProvider({ children }) {
   return (
     <AuthContext.Provider value={{
       user,
-      // BUG-19 FIX: session is now a proper object, not just an alias for user
       session: user ? { user } : null,
       loading,
       initialized,
+      pendingCount,
       signOut,
       refresh,
     }}>

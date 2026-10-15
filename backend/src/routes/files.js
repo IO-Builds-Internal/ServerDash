@@ -101,7 +101,10 @@ const uploadDir = '/tmp/serverdash-uploads/'
 if (!fs.existsSync(uploadDir)) {
   try { fs.mkdirSync(uploadDir, { recursive: true }) } catch {}
 }
-const upload = multer({ dest: uploadDir })
+const upload = multer({
+  dest: uploadDir,
+  limits: { fileSize: 500 * 1024 * 1024 }
+})
 
 // ── GET /api/files/roots — list allowed root directories ──────────────────────
 router.get('/roots', (req, res) => {
